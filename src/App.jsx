@@ -266,6 +266,7 @@ export default function App() {
   const [cntAp,      setCntAp]      = useState(0);
   const [srchAp,     setSrchAp]     = useState("");
   const [selAp,      setSelAp]      = useState(null);
+  const [segAp,      setSegAp]      = useState("");
   const fRefAp = useRef();
 
   // ── Instruções state (PDF-based) ──────────────────────────────────────────
@@ -275,6 +276,7 @@ export default function App() {
   const [logInst,     setLogInst]     = useState([]);
   const [srchInst,    setSrchInst]    = useState("");
   const [selInst,     setSelInst]     = useState(null);
+  const [segInst,     setSegInst]     = useState("");
   const fRefInst = useRef();
 
   // ── Load from localStorage ─────────────────────────────────────────────────
@@ -976,7 +978,6 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
   // ── APÓLICES SECTION (PDF Upload) ───────────────────────────────────────────
   // ══════════════════════════════════════════════════════════════════════════
   const ApolicesSection = () => {
-    const [segInput, setSegInput] = React.useState("");
     const filtAp = apolices.filter(a=>!srchAp||[a.nome,a.seguradora].some(v=>(v||"").toLowerCase().includes(srchAp.toLowerCase())));
     return (
       <div style={{display:"flex",flexDirection:"column",gap:14,maxWidth:isMobile?"100%":900}}>
@@ -996,9 +997,9 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
           <div style={{fontWeight:700,fontSize:13.5,color:C.navy,marginBottom:12}}>Adicionar Nova Apólice</div>
           <div style={{marginBottom:10}}>
             <div style={{fontSize:11,fontWeight:600,color:C.grey,marginBottom:4}}>Seguradora *</div>
-            <input value={segInput} onChange={e=>setSegInput(e.target.value)} placeholder="Ex: Porto Seguro, Tokio Marine, Zurich..." style={{width:"100%",padding:"9px 12px",borderRadius:8,border:`1.5px solid ${C.border}`,fontFamily:font,fontSize:13,color:C.body,outline:"none",boxSizing:"border-box"}}/>
+            <input value={segAp} onChange={e=>setSegAp(e.target.value)} placeholder="Ex: Porto Seguro, Tokio Marine, Zurich..." style={{width:"100%",padding:"9px 12px",borderRadius:8,border:`1.5px solid ${C.border}`,fontFamily:font,fontSize:13,color:C.body,outline:"none",boxSizing:"border-box"}}/>
           </div>
-          <div onClick={()=>fRefAp.current?.click()} onDragOver={e=>{e.preventDefault();setDragAp(true)}} onDragLeave={()=>setDragAp(false)} onDrop={e=>{e.preventDefault();setDragAp(false);handleFileAp(e.dataTransfer.files[0],segInput)}}
+          <div onClick={()=>fRefAp.current?.click()} onDragOver={e=>{e.preventDefault();setDragAp(true)}} onDragLeave={()=>setDragAp(false)} onDrop={e=>{e.preventDefault();setDragAp(false);handleFileAp(e.dataTransfer.files[0],segAp)}}
             style={{border:`2.5px dashed ${dragAp?C.blue:C.border}`,borderRadius:12,padding:isMobile?"24px 16px":"32px 24px",textAlign:"center",cursor:"pointer",background:dragAp?C.light+"44":C.bg,transition:"all 0.2s"}}>
             <div style={{width:44,height:44,margin:"0 auto 10px",background:C.blue+"18",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center"}}>
               {impAp?<RefreshCw size={20} color={C.blue} style={{animation:"spin 0.9s linear infinite"}}/>:<Upload size={20} color={C.blue}/>}
@@ -1006,7 +1007,7 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
             <div style={{fontSize:isMobile?13:14,fontWeight:700,color:C.navy,marginBottom:4}}>{impAp?"Processando PDF...":isMobile?"Toque para selecionar PDF":"Arraste ou clique para selecionar o PDF da apólice"}</div>
             <div style={{fontSize:12,color:C.grey}}>{impAp?"Extraindo cláusulas...":"Apenas arquivos .pdf"}</div>
           </div>
-          <input ref={fRefAp} type="file" accept=".pdf" style={{display:"none"}} onChange={e=>{handleFileAp(e.target.files[0],segInput);e.target.value="";}}/>
+          <input ref={fRefAp} type="file" accept=".pdf" style={{display:"none"}} onChange={e=>{handleFileAp(e.target.files[0],segAp);e.target.value="";}}/>
         </div>
 
         {logAp.length>0&&(
@@ -1060,7 +1061,6 @@ Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),
   // ── INSTRUÇÕES SECTION (PDF Upload) ──────────────────────────────────────
   // ══════════════════════════════════════════════════════════════════════════
   const InstrucoesSection = () => {
-    const [segInput, setSegInput] = React.useState("");
     const filtInst = instrucoes.filter(i=>!srchInst||[i.nome,i.seguradora].some(v=>(v||"").toLowerCase().includes(srchInst.toLowerCase())));
     return (
       <div style={{display:"flex",flexDirection:"column",gap:14,maxWidth:isMobile?"100%":900}}>
@@ -1080,9 +1080,9 @@ Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),
           <div style={{fontWeight:700,fontSize:13.5,color:C.navy,marginBottom:12}}>Adicionar Novo Documento de Instrução</div>
           <div style={{marginBottom:10}}>
             <div style={{fontSize:11,fontWeight:600,color:C.grey,marginBottom:4}}>Seguradora *</div>
-            <input value={segInput} onChange={e=>setSegInput(e.target.value)} placeholder="Ex: Porto Seguro, Tokio Marine, Zurich..." style={{width:"100%",padding:"9px 12px",borderRadius:8,border:`1.5px solid ${C.border}`,fontFamily:font,fontSize:13,color:C.body,outline:"none",boxSizing:"border-box"}}/>
+            <input value={segInst} onChange={e=>setSegInst(e.target.value)} placeholder="Ex: Porto Seguro, Tokio Marine, Zurich..." style={{width:"100%",padding:"9px 12px",borderRadius:8,border:`1.5px solid ${C.border}`,fontFamily:font,fontSize:13,color:C.body,outline:"none",boxSizing:"border-box"}}/>
           </div>
-          <div onClick={()=>fRefInst.current?.click()} onDragOver={e=>{e.preventDefault();setDragInst(true)}} onDragLeave={()=>setDragInst(false)} onDrop={e=>{e.preventDefault();setDragInst(false);handleFileInst(e.dataTransfer.files[0],segInput)}}
+          <div onClick={()=>fRefInst.current?.click()} onDragOver={e=>{e.preventDefault();setDragInst(true)}} onDragLeave={()=>setDragInst(false)} onDrop={e=>{e.preventDefault();setDragInst(false);handleFileInst(e.dataTransfer.files[0],segInst)}}
             style={{border:`2.5px dashed ${dragInst?C.teal:C.border}`,borderRadius:12,padding:isMobile?"24px 16px":"32px 24px",textAlign:"center",cursor:"pointer",background:dragInst?C.light+"44":C.bg,transition:"all 0.2s"}}>
             <div style={{width:44,height:44,margin:"0 auto 10px",background:C.teal+"18",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center"}}>
               {impInst?<RefreshCw size={20} color={C.teal} style={{animation:"spin 0.9s linear infinite"}}/>:<Upload size={20} color={C.teal}/>}
@@ -1090,7 +1090,7 @@ Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),
             <div style={{fontSize:isMobile?13:14,fontWeight:700,color:C.navy,marginBottom:4}}>{impInst?"Processando PDF...":isMobile?"Toque para selecionar PDF":"Arraste ou clique para selecionar o PDF de instruções"}</div>
             <div style={{fontSize:12,color:C.grey}}>{impInst?"Extraindo conteúdo...":"Apenas arquivos .pdf"}</div>
           </div>
-          <input ref={fRefInst} type="file" accept=".pdf" style={{display:"none"}} onChange={e=>{handleFileInst(e.target.files[0],segInput);e.target.value="";}}/>
+          <input ref={fRefInst} type="file" accept=".pdf" style={{display:"none"}} onChange={e=>{handleFileInst(e.target.files[0],segInst);e.target.value="";}}/>
         </div>
 
         {logInst.length>0&&(
