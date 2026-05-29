@@ -187,20 +187,19 @@ const parseFile = (file, onOk, onErr) => {
   r.readAsBinaryString(file);
 };
 
-// ── Parse Apólice Excel/CSV ────────────────────────────────────────────────
-const parseApolice = (file, onOk, onErr) => {
-  const r = new FileReader();
-  r.onload = e => {
-    try {
-      const wb = XLSX.read(e.target.result, {type:"binary",cellDates:true});
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, {defval:""});
-      if (!rows.length) { onErr("Planilha sem dados."); return; }
-      onOk(rows, rows.length);
-    } catch(err) { onErr("Erro: "+err.message); }
-  };
-  r.onerror = () => onErr("Falha ao ler o arquivo.");
-  r.readAsBinaryString(file);
+// ── Parse PDF text via pdfjs-dist ─────────────────────────────────────────
+const extractPdfText = async (file) => {
+  const pdfjsLib = await import('pdfjs-dist');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
+  let fullText = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    fullText += content.items.map(item => item.str).join(' ') + '\n';
+  }
+  return fullText.trim();
 };
 
 // ── Download templates ─────────────────────────────────────────────────────
@@ -216,16 +215,7 @@ const downloadTemplate = () => {
   XLSX.writeFile(wb,"Umma_Template_Sinistros.xlsx");
 };
 
-const downloadTemplateApolice = () => {
-  const cols=["Nº APÓLICE","SEGURADO","CNPJ/CPF","SEGURADORA","PRODUTO","RAMO",
-    "INÍCIO VIGÊNCIA","TÉRMINO VIGÊNCIA","IMP. SEGURADA","PRÊMIO","FRANQUIA",
-    "COBERTURAS","CONTATO SEGURADO","EMAIL SEGURADO","TELEFONE","ANALISTA","OBSERVAÇÕES"];
-  const ws = XLSX.utils.aoa_to_sheet([cols]);
-  ws["!cols"] = [14,28,16,22,20,20,14,14,14,12,12,30,24,28,14,16,30].map(w=>({wch:w}));
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "ApolicesVigentes");
-  XLSX.writeFile(wb,"Umma_Template_Apolices.xlsx");
-};
+// downloadTemplateApolice removed — apólices are now uploaded as PDF
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 const fCur = v => new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL",maximumFractionDigits:0}).format(Number(v)||0);
@@ -268,8 +258,8 @@ export default function App() {
   const [avisoEmail,setAvisoEmail]= useState("");
   const [copiedEmail,setCopiedEmail]=useState(false);
 
-  // ── Apólices state ─────────────────────────────────────────────────────────
-  const [apolices,   setApolices]   = useState([]);
+  // ── Apólices state (PDF-based) ────────────────────────────────────────────
+  const [apolices,   setApolices]   = useState([]); // [{nome, seguradora, texto, tamanho, data}]
   const [dragAp,     setDragAp]     = useState(false);
   const [impAp,      setImpAp]      = useState(false);
   const [logAp,      setLogAp]      = useState([]);
@@ -278,12 +268,14 @@ export default function App() {
   const [selAp,      setSelAp]      = useState(null);
   const fRefAp = useRef();
 
-  // ── Instruções state ───────────────────────────────────────────────────────
-  const [instrucoes,  setInstrucoes]  = useState([]);
-  const [showFormInst,setShowFormInst]= useState(false);
-  const [novaInst,    setNovaInst]    = useState({titulo:"",produto:"",seguradora:"",conteudo:"",documentos:""});
-  const [editInst,    setEditInst]    = useState(null);
+  // ── Instruções state (PDF-based) ──────────────────────────────────────────
+  const [instrucoes,  setInstrucoes]  = useState([]); // [{nome, seguradora, texto, tamanho, data}]
+  const [dragInst,    setDragInst]    = useState(false);
+  const [impInst,     setImpInst]     = useState(false);
+  const [logInst,     setLogInst]     = useState([]);
   const [srchInst,    setSrchInst]    = useState("");
+  const [selInst,     setSelInst]     = useState(null);
+  const fRefInst = useRef();
 
   // ── Load from localStorage ─────────────────────────────────────────────────
   useEffect(() => {
@@ -367,19 +359,54 @@ export default function App() {
     }, err => { setImp(false); setLog([{t:"err",m:err}]); });
   };
 
-  // ── File upload (apólices) ─────────────────────────────────────────────────
-  const handleFileAp = file => {
+  // ── File upload (apólices PDF) ────────────────────────────────────────────
+  const handleFileAp = async (file, seguradoraOverride) => {
     if (!file) return;
     const ext = file.name.split(".").pop().toLowerCase();
-    if (!["xlsx","xls","csv"].includes(ext)) { setLogAp([{t:"err",m:`Formato .${ext} não suportado.`}]); return; }
-    setImpAp(true); setLogAp([{t:"ok",m:`Lendo: ${file.name}...`}]);
-    parseApolice(file, (rows, rawCount) => {
-      setImpAp(false);
-      const logs=[{t:"ok",m:`✓ ${rawCount} apólices lidas.`}];
-      logs.push({t:"ok",m:`✓ ${rows.length} apólices importadas com sucesso.`});
-      setLogAp(logs);
-      saveApolices(rows);
-    }, err => { setImpAp(false); setLogAp([{t:"err",m:err}]); });
+    if (ext !== "pdf") { setLogAp([{t:"err",m:`Formato .${ext} não suportado. Envie um arquivo PDF.`}]); return; }
+    setImpAp(true); setLogAp([{t:"ok",m:`Lendo PDF: ${file.name}...`}]);
+    try {
+      const texto = await extractPdfText(file);
+      const novaApolice = {
+        id: Date.now(),
+        nome: file.name,
+        seguradora: seguradoraOverride || "",
+        texto: texto.slice(0, 12000), // limita para não estourar localStorage
+        tamanho: (file.size/1024).toFixed(1)+" KB",
+        data: new Date().toLocaleDateString("pt-BR")
+      };
+      const nova = [...apolices, novaApolice];
+      saveApolices(nova);
+      setLogAp([{t:"ok",m:`✓ PDF lido com sucesso: ${file.name}`},{t:"ok",m:`✓ ${texto.split(' ').length} palavras extraídas da apólice.`}]);
+    } catch(err) {
+      setLogAp([{t:"err",m:"Erro ao ler PDF: "+err.message}]);
+    }
+    setImpAp(false);
+  };
+
+  // ── File upload (instruções PDF) ──────────────────────────────────────────
+  const handleFileInst = async (file, seguradoraOverride) => {
+    if (!file) return;
+    const ext = file.name.split(".").pop().toLowerCase();
+    if (ext !== "pdf") { setLogInst([{t:"err",m:`Formato .${ext} não suportado. Envie um arquivo PDF.`}]); return; }
+    setImpInst(true); setLogInst([{t:"ok",m:`Lendo PDF: ${file.name}...`}]);
+    try {
+      const texto = await extractPdfText(file);
+      const novaInst = {
+        id: Date.now(),
+        nome: file.name,
+        seguradora: seguradoraOverride || "",
+        texto: texto.slice(0, 12000),
+        tamanho: (file.size/1024).toFixed(1)+" KB",
+        data: new Date().toLocaleDateString("pt-BR")
+      };
+      const nova = [...instrucoes, novaInst];
+      saveInstrucoes(nova);
+      setLogInst([{t:"ok",m:`✓ PDF lido com sucesso: ${file.name}`},{t:"ok",m:`✓ ${texto.split(' ').length} palavras extraídas do documento.`}]);
+    } catch(err) {
+      setLogInst([{t:"err",m:"Erro ao ler PDF: "+err.message}]);
+    }
+    setImpInst(false);
   };
 
   // ── AI (análise rápida de sinistro) ───────────────────────────────────────
@@ -401,15 +428,15 @@ export default function App() {
     setAvisoLd(true); setAvisoRes(null); setAvisoErr(""); setAvisoEmail("");
 
     const apolicesCtx = apolices.length > 0
-      ? `\n\nAPÓLICES VIGENTES NA BASE:\n${apolices.slice(0,20).map(a=>
-          `- Apólice: ${a["Nº APÓLICE"]||a["APOLICE"]||a["APÓLICE"]||"?"} | Segurado: ${a["SEGURADO"]||"?"} | CNPJ/CPF: ${a["CNPJ/CPF"]||"?"} | Produto: ${a["PRODUTO"]||"?"} | Seguradora: ${a["SEGURADORA"]||"?"} | Vigência: ${a["INÍCIO VIGÊNCIA"]||a["INICIO VIGENCIA"]||"?"} a ${a["TÉRMINO VIGÊNCIA"]||a["TERMINO VIGENCIA"]||"?"} | IS: ${a["IMP. SEGURADA"]||"?"} | Coberturas: ${a["COBERTURAS"]||"?"}`
-        ).join("\n")}`
+      ? `\n\nAPÓLICES VIGENTES NA BASE (${apolices.length} apólice(s) cadastrada(s)):\n${apolices.slice(0,5).map(a=>
+          `--- Apólice: ${a.nome} | Seguradora: ${a.seguradora||"não informada"} | Adicionada em: ${a.data}\nConteúdo:\n${(a.texto||"sem texto").slice(0,2000)}`
+        ).join("\n\n")}`
       : "\n\nNota: Nenhuma apólice cadastrada na base. Analise com base nas informações do aviso.";
 
     const instrucoesCtx = instrucoes.length > 0
-      ? `\n\nINSTRUÇÕES DE REGULAÇÃO CADASTRADAS:\n${instrucoes.slice(0,10).map(i=>
-          `- [${i.produto||"Geral"}/${i.seguradora||"Todas"}] ${i.titulo}: ${i.conteudo} | Documentos: ${i.documentos}`
-        ).join("\n")}`
+      ? `\n\nINSTRUÇÕES E DOCUMENTOS DE REGULAÇÃO (${instrucoes.length} documento(s)):\n${instrucoes.slice(0,5).map(i=>
+          `--- Documento: ${i.nome} | Seguradora: ${i.seguradora||"não informada"} | Adicionado em: ${i.data}\nConteúdo:\n${(i.texto||"sem texto").slice(0,2000)}`
+        ).join("\n\n")}`
       : "";
 
     const sys = `Você é um especialista em regulação de sinistros da Umma Corretora de Seguros.
@@ -466,18 +493,9 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
     setAvisoLd(false);
   };
 
-  // ── Instruções CRUD ───────────────────────────────────────────────────────
-  const salvarInstrucao = () => {
-    const dados = editInst !== null ? {...instrucoes[editInst], ...novaInst} : {...novaInst, id:Date.now()};
-    const nova = editInst !== null
-      ? instrucoes.map((it,i)=>i===editInst?dados:it)
-      : [...instrucoes, dados];
-    saveInstrucoes(nova);
-    setNovaInst({titulo:"",produto:"",seguradora:"",conteudo:"",documentos:""});
-    setEditInst(null); setShowFormInst(false);
-  };
-  const excluirInstrucao = idx => { saveInstrucoes(instrucoes.filter((_,i)=>i!==idx)); };
-  const editarInstrucao = idx => { setNovaInst({...instrucoes[idx]}); setEditInst(idx); setShowFormInst(true); };
+  // ── Instruções helpers ────────────────────────────────────────────────────
+  const excluirInstrucao = id => { saveInstrucoes(instrucoes.filter(i=>i.id!==id)); };
+  const excluirApolice   = id => { saveApolices(apolices.filter(a=>a.id!==id)); };
 
   // ── NAV ───────────────────────────────────────────────────────────────────
   const NAV=[
@@ -627,32 +645,53 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
     );
   };
 
-  // ── APÓLICE DETAIL OVERLAY ────────────────────────────────────────────────
+  // ── APÓLICE DETAIL OVERLAY (PDF) ────────────────────────────────────────────
   const ApoliceDetail = () => {
     if (!selAp) return null;
-    const keys = Object.keys(selAp).filter(k=>selAp[k]!=="");
     return (
       <div style={{position:"fixed",inset:0,background:"rgba(2,18,76,0.5)",zIndex:50,display:"flex",alignItems:isMobile?"flex-end":"center",justifyContent:"center",padding:isMobile?0:20}}>
-        <div style={{background:C.white,borderRadius:isMobile?"16px 16px 0 0":12,width:"100%",maxWidth:isMobile?"100%":680,maxHeight:isMobile?"92vh":"85vh",overflow:"auto",padding:isMobile?16:20}}>
+        <div style={{background:C.white,borderRadius:isMobile?"16px 16px 0 0":12,width:"100%",maxWidth:isMobile?"100%":700,maxHeight:isMobile?"92vh":"88vh",overflow:"auto",padding:isMobile?16:20}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12,position:"sticky",top:0,background:C.white,paddingBottom:8,borderBottom:`1px solid ${C.border}`}}>
-            <div>
-              <div style={{fontSize:11,color:C.blue,fontWeight:700,letterSpacing:0.5,marginBottom:2}}>APÓLICE VIGENTE</div>
-              <div style={{fontSize:isMobile?14:16,fontWeight:700,color:C.navy}}>{selAp["Nº APÓLICE"]||selAp["APOLICE"]||selAp["APÓLICE"]||"—"}</div>
-              <div style={{fontSize:12,color:C.grey,marginTop:2}}>{selAp["SEGURADO"]||"—"}</div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:11,color:C.blue,fontWeight:700,letterSpacing:0.5,marginBottom:2}}>APÓLICE VIGENTE — PDF</div>
+              <div style={{fontSize:isMobile?13:15,fontWeight:700,color:C.navy,wordBreak:"break-word"}}>{selAp.nome}</div>
+              <div style={{fontSize:12,color:C.grey,marginTop:2}}>Seguradora: <strong>{selAp.seguradora||"não informada"}</strong> · {selAp.tamanho} · {selAp.data}</div>
             </div>
-            <button onClick={()=>setSelAp(null)} style={{background:"transparent",border:"none",cursor:"pointer",padding:4}}><X size={18} color={C.grey}/></button>
+            <button onClick={()=>setSelAp(null)} style={{background:"transparent",border:"none",cursor:"pointer",padding:4,flexShrink:0}}><X size={18} color={C.grey}/></button>
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
-            {keys.map((k,i)=>(
-              <div key={i} style={{background:C.bg,borderRadius:8,padding:"8px 10px",gridColumn:k==="COBERTURAS"||k==="OBSERVAÇÕES"?"1/-1":"auto"}}>
-                <div style={{fontSize:9.5,color:C.grey,fontWeight:600,textTransform:"uppercase",letterSpacing:0.3}}>{k}</div>
-                <div style={{fontSize:12.5,fontWeight:600,color:C.body,marginTop:2,wordBreak:"break-word"}}>{String(selAp[k])}</div>
-              </div>
-            ))}
+          <div style={{background:C.bg,borderRadius:8,padding:"12px 14px",marginBottom:14,maxHeight:420,overflowY:"auto"}}>
+            <div style={{fontSize:10,fontWeight:700,color:C.grey,textTransform:"uppercase",letterSpacing:0.3,marginBottom:6}}>Conteúdo extraído do PDF</div>
+            <pre style={{fontSize:11.5,color:C.body,lineHeight:1.6,whiteSpace:"pre-wrap",wordBreak:"break-word",margin:0,fontFamily:font}}>{selAp.texto||"Sem conteúdo extraído."}</pre>
           </div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            <button onClick={()=>{setAvisoTxt(`Segurado: ${selAp["SEGURADO"]||""}\nApólice: ${selAp["Nº APÓLICE"]||selAp["APÓLICE"]||""}\nSeguradora: ${selAp["SEGURADORA"]||""}\nProduto: ${selAp["PRODUTO"]||""}\nVigência: ${selAp["INÍCIO VIGÊNCIA"]||""} a ${selAp["TÉRMINO VIGÊNCIA"]||""}`);setSec("aviso");setSelAp(null)}} style={btn(C.teal,isMobile)}><Mail size={12}/>Criar Aviso</button>
+            <button onClick={()=>{setAvisoTxt(`Apólice: ${selAp.nome}\nSeguradora: ${selAp.seguradora||""}`);setSec("aviso");setSelAp(null)}} style={btn(C.teal,isMobile)}><Mail size={12}/>Criar Aviso</button>
             <button onClick={()=>setSelAp(null)} style={{...btn(C.white,isMobile),color:C.grey}}>Fechar</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ── INSTRUÇÃO DETAIL OVERLAY (PDF) ───────────────────────────────────────────
+  const InstDetail = () => {
+    if (!selInst) return null;
+    return (
+      <div style={{position:"fixed",inset:0,background:"rgba(2,18,76,0.5)",zIndex:50,display:"flex",alignItems:isMobile?"flex-end":"center",justifyContent:"center",padding:isMobile?0:20}}>
+        <div style={{background:C.white,borderRadius:isMobile?"16px 16px 0 0":12,width:"100%",maxWidth:isMobile?"100%":700,maxHeight:isMobile?"92vh":"88vh",overflow:"auto",padding:isMobile?16:20}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12,position:"sticky",top:0,background:C.white,paddingBottom:8,borderBottom:`1px solid ${C.border}`}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:11,color:C.teal,fontWeight:700,letterSpacing:0.5,marginBottom:2}}>INSTRUÇÕES DE REGULAÇÃO — PDF</div>
+              <div style={{fontSize:isMobile?13:15,fontWeight:700,color:C.navy,wordBreak:"break-word"}}>{selInst.nome}</div>
+              <div style={{fontSize:12,color:C.grey,marginTop:2}}>Seguradora: <strong>{selInst.seguradora||"não informada"}</strong> · {selInst.tamanho} · {selInst.data}</div>
+            </div>
+            <button onClick={()=>setSelInst(null)} style={{background:"transparent",border:"none",cursor:"pointer",padding:4,flexShrink:0}}><X size={18} color={C.grey}/></button>
+          </div>
+          <div style={{background:C.bg,borderRadius:8,padding:"12px 14px",marginBottom:14,maxHeight:420,overflowY:"auto"}}>
+            <div style={{fontSize:10,fontWeight:700,color:C.grey,textTransform:"uppercase",letterSpacing:0.3,marginBottom:6}}>Conteúdo extraído do PDF</div>
+            <pre style={{fontSize:11.5,color:C.body,lineHeight:1.6,whiteSpace:"pre-wrap",wordBreak:"break-word",margin:0,fontFamily:font}}>{selInst.texto||"Sem conteúdo extraído."}</pre>
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>setSelInst(null)} style={{...btn(C.white,isMobile),color:C.grey}}>Fechar</button>
           </div>
         </div>
       </div>
@@ -934,10 +973,11 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
 
 
   // ══════════════════════════════════════════════════════════════════════════
-  // ── APÓLICES SECTION ──────────────────────────────────────────────────────
+  // ── APÓLICES SECTION (PDF Upload) ───────────────────────────────────────────
   // ══════════════════════════════════════════════════════════════════════════
   const ApolicesSection = () => {
-    const filtAp = apolices.filter(a=>!srchAp||Object.values(a).some(v=>String(v).toLowerCase().includes(srchAp.toLowerCase())));
+    const [segInput, setSegInput] = React.useState("");
+    const filtAp = apolices.filter(a=>!srchAp||[a.nome,a.seguradora].some(v=>(v||"").toLowerCase().includes(srchAp.toLowerCase())));
     return (
       <div style={{display:"flex",flexDirection:"column",gap:14,maxWidth:isMobile?"100%":900}}>
         <div style={{...card,background:`linear-gradient(135deg,${C.navy},#1A3A8F)`,border:"none",padding:isMobile?"16px":"22px 26px"}}>
@@ -945,22 +985,29 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
             <div style={{width:38,height:38,background:"rgba(62,117,255,0.25)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><FileCheck size={18} color={C.blue}/></div>
             <div>
               <div style={{fontSize:isMobile?14:16,fontWeight:700,color:C.white}}>Apólices Vigentes</div>
-              <div style={{fontSize:11.5,color:"rgba(255,255,255,0.6)",marginTop:1}}>Base de apólices para identificação automática no aviso de sinistro</div>
+              <div style={{fontSize:11.5,color:"rgba(255,255,255,0.6)",marginTop:1}}>Upload de PDF — a IA lê as cláusulas automaticamente</div>
             </div>
           </div>
-          <p style={{color:"rgba(255,255,255,0.72)",fontSize:12.5,margin:0,lineHeight:1.5}}>Importe a planilha de apólices vigentes. A IA usará esses dados para identificar automaticamente o cliente e a cobertura ao receber um aviso de sinistro.</p>
-          {cntAp>0&&<div style={{marginTop:8,background:"rgba(44,221,124,0.15)",border:"1px solid rgba(44,221,124,0.4)",borderRadius:8,padding:"7px 12px",fontSize:12,color:C.green,fontWeight:600}}>✓ {cntAp} apólices carregadas na base.</div>}
+          <p style={{color:"rgba(255,255,255,0.72)",fontSize:12.5,margin:0,lineHeight:1.5}}>Informe a seguradora e faça o upload do PDF da apólice. O texto das cláusulas será extraído e usado pela IA ao analisar avisos de sinistro.</p>
+          {cntAp>0&&<div style={{marginTop:8,background:"rgba(44,221,124,0.15)",border:"1px solid rgba(44,221,124,0.4)",borderRadius:8,padding:"7px 12px",fontSize:12,color:C.green,fontWeight:600}}>✓ {cntAp} apólice(s) carregada(s) na base.</div>}
         </div>
 
-        <div onClick={()=>fRefAp.current?.click()} onDragOver={e=>{e.preventDefault();setDragAp(true)}} onDragLeave={()=>setDragAp(false)} onDrop={e=>{e.preventDefault();setDragAp(false);handleFileAp(e.dataTransfer.files[0])}}
-          style={{border:`2.5px dashed ${dragAp?C.blue:C.border}`,borderRadius:12,padding:isMobile?"28px 16px":"36px 24px",textAlign:"center",cursor:"pointer",background:dragAp?C.light+"44":C.bg,transition:"all 0.2s"}}>
-          <div style={{width:48,height:48,margin:"0 auto 10px",background:C.blue+"18",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center"}}>
-            {impAp?<RefreshCw size={22} color={C.blue} style={{animation:"spin 0.9s linear infinite"}}/>:<Upload size={22} color={C.blue}/>}
+        <div style={{...card,border:`2px solid ${C.blue}`}}>
+          <div style={{fontWeight:700,fontSize:13.5,color:C.navy,marginBottom:12}}>Adicionar Nova Apólice</div>
+          <div style={{marginBottom:10}}>
+            <div style={{fontSize:11,fontWeight:600,color:C.grey,marginBottom:4}}>Seguradora *</div>
+            <input value={segInput} onChange={e=>setSegInput(e.target.value)} placeholder="Ex: Porto Seguro, Tokio Marine, Zurich..." style={{width:"100%",padding:"9px 12px",borderRadius:8,border:`1.5px solid ${C.border}`,fontFamily:font,fontSize:13,color:C.body,outline:"none",boxSizing:"border-box"}}/>
           </div>
-          <div style={{fontSize:isMobile?13:15,fontWeight:700,color:C.navy,marginBottom:4}}>{impAp?"Processando...":isMobile?"Toque para selecionar":"Arraste ou clique para selecionar"}</div>
-          <div style={{fontSize:12,color:C.grey}}>{impAp?"Importando apólices...":".xlsx · .xls · .csv"}</div>
+          <div onClick={()=>fRefAp.current?.click()} onDragOver={e=>{e.preventDefault();setDragAp(true)}} onDragLeave={()=>setDragAp(false)} onDrop={e=>{e.preventDefault();setDragAp(false);handleFileAp(e.dataTransfer.files[0],segInput)}}
+            style={{border:`2.5px dashed ${dragAp?C.blue:C.border}`,borderRadius:12,padding:isMobile?"24px 16px":"32px 24px",textAlign:"center",cursor:"pointer",background:dragAp?C.light+"44":C.bg,transition:"all 0.2s"}}>
+            <div style={{width:44,height:44,margin:"0 auto 10px",background:C.blue+"18",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center"}}>
+              {impAp?<RefreshCw size={20} color={C.blue} style={{animation:"spin 0.9s linear infinite"}}/>:<Upload size={20} color={C.blue}/>}
+            </div>
+            <div style={{fontSize:isMobile?13:14,fontWeight:700,color:C.navy,marginBottom:4}}>{impAp?"Processando PDF...":isMobile?"Toque para selecionar PDF":"Arraste ou clique para selecionar o PDF da apólice"}</div>
+            <div style={{fontSize:12,color:C.grey}}>{impAp?"Extraindo cláusulas...":"Apenas arquivos .pdf"}</div>
+          </div>
+          <input ref={fRefAp} type="file" accept=".pdf" style={{display:"none"}} onChange={e=>{handleFileAp(e.target.files[0],segInput);e.target.value="";}}/>
         </div>
-        <input ref={fRefAp} type="file" accept=".xlsx,.xls,.csv" style={{display:"none"}} onChange={e=>{handleFileAp(e.target.files[0]);e.target.value="";}}/>
 
         {logAp.length>0&&(
           <div style={{...card,padding:0,overflow:"hidden"}}>
@@ -974,65 +1021,47 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
           </div>
         )}
 
-        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-          <button onClick={downloadTemplateApolice} style={btn(C.navy,isMobile)}><Download size={13}/>Baixar Template Apólices</button>
-          {apolices.length>0&&<button onClick={()=>{if(window.confirm("Limpar todas as apólices?")) saveApolices([]);}} style={{...btn(C.white,isMobile),color:C.red,border:`1px solid ${C.red}22`}}><Trash2 size={13}/>Limpar Base</button>}
-        </div>
-
         {apolices.length>0&&(
           <div style={{display:"flex",flexDirection:"column",gap:10}}>
             <div style={{position:"relative"}}>
               <Search size={13} style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",color:C.grey}}/>
-              <input value={srchAp} onChange={e=>setSrchAp(e.target.value)} placeholder="Buscar apólice por segurado, número, seguradora..." style={{width:"100%",padding:"9px 12px 9px 30px",borderRadius:8,border:`1.5px solid ${C.border}`,fontFamily:font,fontSize:13,color:C.body,outline:"none",boxSizing:"border-box"}}/>
+              <input value={srchAp} onChange={e=>setSrchAp(e.target.value)} placeholder="Buscar apólice por nome ou seguradora..." style={{width:"100%",padding:"9px 12px 9px 30px",borderRadius:8,border:`1.5px solid ${C.border}`,fontFamily:font,fontSize:13,color:C.body,outline:"none",boxSizing:"border-box"}}/>
             </div>
-            <div style={{fontSize:12,color:C.grey}}>{filtAp.length} de {apolices.length} apólices</div>
-            {isMobile?(
-              <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                {filtAp.slice(0,50).map((a,i)=>(
-                  <div key={i} style={{...card,padding:"12px 14px",cursor:"pointer"}} onClick={()=>setSelAp(a)}>
-                    <div style={{fontSize:12,fontWeight:700,color:C.blue}}>{a["Nº APÓLICE"]||a["APÓLICE"]||a["APOLICE"]||"—"}</div>
-                    <div style={{fontSize:13,fontWeight:600,color:C.body,marginTop:2}}>{a["SEGURADO"]||"—"}</div>
-                    <div style={{fontSize:11.5,color:C.grey,marginTop:2}}>{a["PRODUTO"]||"—"} · {a["SEGURADORA"]||"—"}</div>
-                    <div style={{fontSize:11,color:C.grey,marginTop:2}}>Vigência: {a["INÍCIO VIGÊNCIA"]||a["INICIO VIGENCIA"]||"—"} a {a["TÉRMINO VIGÊNCIA"]||a["TERMINO VIGENCIA"]||"—"}</div>
+            <div style={{fontSize:12,color:C.grey}}>{filtAp.length} de {apolices.length} apólice(s)</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {filtAp.map((a,i)=>(
+                <div key={a.id||i} style={{...card,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+                  <div style={{width:36,height:36,background:C.blue+"18",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><FileCheck size={16} color={C.blue}/></div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:700,color:C.navy,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.nome}</div>
+                    <div style={{fontSize:11.5,color:C.grey,marginTop:2}}>Seguradora: <strong>{a.seguradora||"não informada"}</strong> · {a.tamanho} · Adicionada em {a.data}</div>
                   </div>
-                ))}
-              </div>
-            ):(
-              <div style={{...card,padding:0,overflow:"hidden"}}>
-                <div style={{overflowX:"auto"}}>
-                  <table style={{width:"100%",borderCollapse:"collapse",minWidth:700}}>
-                    <thead><tr style={{background:C.navy}}>{["Nº Apólice","Segurado","Produto","Seguradora","Início Vig.","Término Vig.","IS",""].map(h=><th key={h} style={{padding:"9px 8px",textAlign:"left",fontSize:10,fontWeight:600,color:"rgba(255,255,255,0.8)",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
-                    <tbody>
-                      {filtAp.slice(0,200).map((a,i)=>(
-                        <tr key={i} style={{borderBottom:`1px solid ${C.border}`}} onMouseEnter={e=>e.currentTarget.style.background=C.bg} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                          <td style={{padding:"8px 8px",fontSize:11.5,fontWeight:700,color:C.blue,whiteSpace:"nowrap"}}>{a["Nº APÓLICE"]||a["APÓLICE"]||a["APOLICE"]||"—"}</td>
-                          <td style={{padding:"8px 8px",fontSize:11.5,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a["SEGURADO"]||"—"}</td>
-                          <td style={{padding:"8px 8px",fontSize:11,color:C.grey,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a["PRODUTO"]||"—"}</td>
-                          <td style={{padding:"8px 8px",fontSize:11,color:C.grey,maxWidth:130,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a["SEGURADORA"]||"—"}</td>
-                          <td style={{padding:"8px 8px",fontSize:11,color:C.grey,whiteSpace:"nowrap"}}>{a["INÍCIO VIGÊNCIA"]||a["INICIO VIGENCIA"]||"—"}</td>
-                          <td style={{padding:"8px 8px",fontSize:11,color:C.grey,whiteSpace:"nowrap"}}>{a["TÉRMINO VIGÊNCIA"]||a["TERMINO VIGENCIA"]||"—"}</td>
-                          <td style={{padding:"8px 8px",fontSize:11,color:C.grey,whiteSpace:"nowrap"}}>{a["IMP. SEGURADA"]||"—"}</td>
-                          <td style={{padding:"8px 8px"}}><button onClick={()=>setSelAp(a)} style={{background:"transparent",border:`1px solid ${C.blue}`,color:C.blue,borderRadius:6,padding:"3px 7px",fontSize:10.5,cursor:"pointer",fontFamily:font,fontWeight:600}}><Eye size={10} style={{verticalAlign:"middle"}}/></button></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <div style={{display:"flex",gap:6,flexShrink:0}}>
+                    <button onClick={()=>setSelAp(a)} style={{...btn(C.blue,true),padding:"5px 10px"}}><Eye size={11}/>Ver</button>
+                    <button onClick={()=>{setAvisoTxt(`Apólice: ${a.nome}
+Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),padding:"5px 10px"}}><Mail size={11}/>Aviso</button>
+                    <button onClick={()=>excluirApolice(a.id)} style={{...btn(C.white,true),padding:"5px 8px",color:C.red}}><Trash2 size={11}/></button>
+                  </div>
                 </div>
-                {filtAp.length===0&&<div style={{padding:28,textAlign:"center",color:C.grey,fontSize:13}}>Nenhuma apólice encontrada.</div>}
-              </div>
-            )}
+              ))}
+            </div>
           </div>
         )}
+
+        {apolices.length>0&&<div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+          <button onClick={()=>{if(window.confirm("Limpar todas as apólices?")) saveApolices([]);}} style={{...btn(C.white,isMobile),color:C.red,border:`1px solid ${C.red}22`}}><Trash2 size={13}/>Limpar Base</button>
+        </div>}
       </div>
     );
   };
 
 
   // ══════════════════════════════════════════════════════════════════════════
-  // ── INSTRUÇÕES SECTION ────────────────────────────────────────────────────
+  // ── INSTRUÇÕES SECTION (PDF Upload) ──────────────────────────────────────
   // ══════════════════════════════════════════════════════════════════════════
   const InstrucoesSection = () => {
-    const filtInst = instrucoes.filter(i=>!srchInst||[i.titulo,i.produto,i.seguradora,i.conteudo].some(v=>(v||"").toLowerCase().includes(srchInst.toLowerCase())));
+    const [segInput, setSegInput] = React.useState("");
+    const filtInst = instrucoes.filter(i=>!srchInst||[i.nome,i.seguradora].some(v=>(v||"").toLowerCase().includes(srchInst.toLowerCase())));
     return (
       <div style={{display:"flex",flexDirection:"column",gap:14,maxWidth:isMobile?"100%":900}}>
         <div style={{...card,background:`linear-gradient(135deg,${C.navy},#1A3A8F)`,border:"none",padding:isMobile?"16px":"22px 26px"}}>
@@ -1040,86 +1069,84 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
             <div style={{width:38,height:38,background:"rgba(62,117,255,0.25)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Clipboard size={18} color={C.blue}/></div>
             <div>
               <div style={{fontSize:isMobile?14:16,fontWeight:700,color:C.white}}>Instruções de Regulação</div>
-              <div style={{fontSize:11.5,color:"rgba(255,255,255,0.6)",marginTop:1}}>Documentos e procedimentos por produto/seguradora</div>
+              <div style={{fontSize:11.5,color:"rgba(255,255,255,0.6)",marginTop:1}}>Upload de PDF — procedimentos e lista de documentos por seguradora</div>
             </div>
           </div>
-          <p style={{color:"rgba(255,255,255,0.72)",fontSize:12.5,margin:0,lineHeight:1.5}}>Cadastre instruções e documentos necessários por produto e seguradora. A IA usará essas informações para orientar o processo de regulação ao receber um aviso de sinistro.</p>
+          <p style={{color:"rgba(255,255,255,0.72)",fontSize:12.5,margin:0,lineHeight:1.5}}>Informe a seguradora e faça o upload do PDF com as instruções de regulação e lista de documentos necessários. A IA usará esse conteúdo para orientar o processo ao receber um aviso de sinistro.</p>
+          {instrucoes.length>0&&<div style={{marginTop:8,background:"rgba(44,221,124,0.15)",border:"1px solid rgba(44,221,124,0.4)",borderRadius:8,padding:"7px 12px",fontSize:12,color:C.green,fontWeight:600}}>✓ {instrucoes.length} documento(s) de instrução carregado(s).</div>}
         </div>
 
-        <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
-          <div style={{position:"relative",flex:1,minWidth:180}}>
-            <Search size={13} style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",color:C.grey}}/>
-            <input value={srchInst} onChange={e=>setSrchInst(e.target.value)} placeholder="Buscar instrução..." style={{width:"100%",padding:"9px 12px 9px 30px",borderRadius:8,border:`1.5px solid ${C.border}`,fontFamily:font,fontSize:13,color:C.body,outline:"none",boxSizing:"border-box"}}/>
+        <div style={{...card,border:`2px solid ${C.teal}`}}>
+          <div style={{fontWeight:700,fontSize:13.5,color:C.navy,marginBottom:12}}>Adicionar Novo Documento de Instrução</div>
+          <div style={{marginBottom:10}}>
+            <div style={{fontSize:11,fontWeight:600,color:C.grey,marginBottom:4}}>Seguradora *</div>
+            <input value={segInput} onChange={e=>setSegInput(e.target.value)} placeholder="Ex: Porto Seguro, Tokio Marine, Zurich..." style={{width:"100%",padding:"9px 12px",borderRadius:8,border:`1.5px solid ${C.border}`,fontFamily:font,fontSize:13,color:C.body,outline:"none",boxSizing:"border-box"}}/>
           </div>
-          <button onClick={()=>{setNovaInst({titulo:"",produto:"",seguradora:"",conteudo:"",documentos:""});setEditInst(null);setShowFormInst(true);}} style={btn(C.blue,isMobile)}><Plus size={13}/>Nova Instrução</button>
+          <div onClick={()=>fRefInst.current?.click()} onDragOver={e=>{e.preventDefault();setDragInst(true)}} onDragLeave={()=>setDragInst(false)} onDrop={e=>{e.preventDefault();setDragInst(false);handleFileInst(e.dataTransfer.files[0],segInput)}}
+            style={{border:`2.5px dashed ${dragInst?C.teal:C.border}`,borderRadius:12,padding:isMobile?"24px 16px":"32px 24px",textAlign:"center",cursor:"pointer",background:dragInst?C.light+"44":C.bg,transition:"all 0.2s"}}>
+            <div style={{width:44,height:44,margin:"0 auto 10px",background:C.teal+"18",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center"}}>
+              {impInst?<RefreshCw size={20} color={C.teal} style={{animation:"spin 0.9s linear infinite"}}/>:<Upload size={20} color={C.teal}/>}
+            </div>
+            <div style={{fontSize:isMobile?13:14,fontWeight:700,color:C.navy,marginBottom:4}}>{impInst?"Processando PDF...":isMobile?"Toque para selecionar PDF":"Arraste ou clique para selecionar o PDF de instruções"}</div>
+            <div style={{fontSize:12,color:C.grey}}>{impInst?"Extraindo conteúdo...":"Apenas arquivos .pdf"}</div>
+          </div>
+          <input ref={fRefInst} type="file" accept=".pdf" style={{display:"none"}} onChange={e=>{handleFileInst(e.target.files[0],segInput);e.target.value="";}}/>
         </div>
 
-        {showFormInst&&(
-          <div style={{...card,border:`2px solid ${C.blue}`}}>
-            <div style={{fontWeight:700,fontSize:14,color:C.navy,marginBottom:12}}>{editInst!==null?"Editar Instrução":"Nova Instrução de Regulação"}</div>
-            <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:10,marginBottom:10}}>
-              {[["Título *","titulo","Ex: Procedimento Incêndio"],["Produto","produto","Ex: Incêndio/Empresarial"],["Seguradora","seguradora","Ex: Porto Seguro"]].map(([l,k,ph])=>(
-                <div key={k}>
-                  <div style={{fontSize:11,fontWeight:600,color:C.grey,marginBottom:4}}>{l}</div>
-                  <input value={novaInst[k]||""} onChange={e=>setNovaInst(v=>({...v,[k]:e.target.value}))} placeholder={ph} style={{width:"100%",padding:"8px 10px",borderRadius:8,border:`1.5px solid ${C.border}`,fontFamily:font,fontSize:13,color:C.body,outline:"none",boxSizing:"border-box"}}/>
+        {logInst.length>0&&(
+          <div style={{...card,padding:0,overflow:"hidden"}}>
+            <div style={{padding:"8px 14px",background:C.navy,fontSize:10,fontWeight:700,color:"rgba(255,255,255,0.65)",letterSpacing:0.5,textTransform:"uppercase"}}>Log de Importação</div>
+            {logInst.map((l,i)=>(
+              <div key={i} style={{padding:"8px 14px",borderBottom:i<logInst.length-1?`1px solid ${C.border}`:"none",display:"flex",alignItems:"flex-start",gap:8,background:l.t==="err"?"#FEF2F2":C.white}}>
+                {l.t==="ok"?<CheckCircle size={13} color={C.green} style={{marginTop:1,flexShrink:0}}/>:<AlertCircle size={13} color={C.red} style={{marginTop:1,flexShrink:0}}/>}
+                <span style={{fontSize:12,color:l.t==="err"?"#B91C1C":C.body,lineHeight:1.5}}>{l.m}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {instrucoes.length===0&&logInst.length===0&&(
+          <div style={{...card,padding:28,textAlign:"center"}}>
+            <Clipboard size={36} color={C.border} style={{marginBottom:10}}/>
+            <div style={{fontSize:13,color:C.grey,marginBottom:4}}>Nenhum documento de instrução cadastrado ainda.</div>
+            <div style={{fontSize:12,color:C.grey}}>Adicione PDFs com procedimentos de regulação e lista de documentos por seguradora.</div>
+          </div>
+        )}
+
+        {instrucoes.length>0&&(
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            <div style={{position:"relative"}}>
+              <Search size={13} style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",color:C.grey}}/>
+              <input value={srchInst} onChange={e=>setSrchInst(e.target.value)} placeholder="Buscar instrução por nome ou seguradora..." style={{width:"100%",padding:"9px 12px 9px 30px",borderRadius:8,border:`1.5px solid ${C.border}`,fontFamily:font,fontSize:13,color:C.body,outline:"none",boxSizing:"border-box"}}/>
+            </div>
+            <div style={{fontSize:12,color:C.grey}}>{filtInst.length} de {instrucoes.length} documento(s)</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {filtInst.map((inst,i)=>(
+                <div key={inst.id||i} style={{...card,borderLeft:`4px solid ${C.teal}`,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+                  <div style={{width:36,height:36,background:C.teal+"18",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Clipboard size={16} color={C.teal}/></div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:700,color:C.navy,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{inst.nome}</div>
+                    <div style={{fontSize:11.5,color:C.grey,marginTop:2}}>Seguradora: <strong>{inst.seguradora||"não informada"}</strong> · {inst.tamanho} · Adicionado em {inst.data}</div>
+                  </div>
+                  <div style={{display:"flex",gap:6,flexShrink:0}}>
+                    <button onClick={()=>setSelInst(inst)} style={{...btn(C.teal,true),padding:"5px 10px"}}><Eye size={11}/>Ver</button>
+                    <button onClick={()=>excluirInstrucao(inst.id)} style={{...btn(C.white,true),padding:"5px 8px",color:C.red}}><Trash2 size={11}/></button>
+                  </div>
                 </div>
               ))}
             </div>
-            <div style={{marginBottom:10}}>
-              <div style={{fontSize:11,fontWeight:600,color:C.grey,marginBottom:4}}>Instruções / Procedimento *</div>
-              <textarea value={novaInst.conteudo||""} onChange={e=>setNovaInst(v=>({...v,conteudo:e.target.value}))} placeholder="Descreva o procedimento de regulação para este produto/seguradora..." style={{width:"100%",padding:"8px 10px",borderRadius:8,border:`1.5px solid ${C.border}`,fontFamily:font,fontSize:13,color:C.body,outline:"none",resize:"vertical",minHeight:100,boxSizing:"border-box"}}/>
-            </div>
-            <div style={{marginBottom:14}}>
-              <div style={{fontSize:11,fontWeight:600,color:C.grey,marginBottom:4}}>Documentos Necessários</div>
-              <textarea value={novaInst.documentos||""} onChange={e=>setNovaInst(v=>({...v,documentos:e.target.value}))} placeholder="Liste os documentos necessários separados por vírgula ou linha..." style={{width:"100%",padding:"8px 10px",borderRadius:8,border:`1.5px solid ${C.border}`,fontFamily:font,fontSize:13,color:C.body,outline:"none",resize:"vertical",minHeight:80,boxSizing:"border-box"}}/>
-            </div>
-            <div style={{display:"flex",gap:8}}>
-              <button onClick={salvarInstrucao} disabled={!novaInst.titulo||!novaInst.conteudo} style={{...btn(C.blue,isMobile),opacity:!novaInst.titulo||!novaInst.conteudo?0.5:1}}><CheckCircle size={13}/>Salvar</button>
-              <button onClick={()=>{setShowFormInst(false);setEditInst(null);}} style={{...btn(C.white,isMobile),color:C.grey}}>Cancelar</button>
-            </div>
           </div>
         )}
 
-        {filtInst.length===0&&!showFormInst&&(
-          <div style={{...card,padding:28,textAlign:"center"}}>
-            <Clipboard size={36} color={C.border} style={{marginBottom:10}}/>
-            <div style={{fontSize:13,color:C.grey,marginBottom:12}}>Nenhuma instrução cadastrada ainda.<br/>Adicione procedimentos de regulação por produto e seguradora.</div>
-            <button onClick={()=>{setNovaInst({titulo:"",produto:"",seguradora:"",conteudo:"",documentos:""});setEditInst(null);setShowFormInst(true);}} style={btn(C.blue,isMobile)}><Plus size={13}/>Adicionar Primeira Instrução</button>
-          </div>
-        )}
-
-        <div style={{display:"flex",flexDirection:"column",gap:10}}>
-          {filtInst.map((inst,i)=>(
-            <div key={inst.id||i} style={{...card,borderLeft:`4px solid ${C.blue}`}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8,flexWrap:"wrap",gap:6}}>
-                <div>
-                  <div style={{fontSize:14,fontWeight:700,color:C.navy}}>{inst.titulo}</div>
-                  <div style={{display:"flex",gap:6,marginTop:4,flexWrap:"wrap"}}>
-                    {inst.produto&&<span style={bdg(C.blue,C.light)}>{inst.produto}</span>}
-                    {inst.seguradora&&<span style={bdg(C.teal,"#F0FDF4")}>{inst.seguradora}</span>}
-                  </div>
-                </div>
-                <div style={{display:"flex",gap:6}}>
-                  <button onClick={()=>editarInstrucao(instrucoes.indexOf(inst))} style={{...btn(C.white,true),padding:"5px 8px",color:C.blue}}><FileText size={12}/></button>
-                  <button onClick={()=>excluirInstrucao(instrucoes.indexOf(inst))} style={{...btn(C.white,true),padding:"5px 8px",color:C.red}}><Trash2 size={12}/></button>
-                </div>
-              </div>
-              <div style={{fontSize:12.5,color:C.body,lineHeight:1.6,marginBottom:inst.documentos?8:0}}>{inst.conteudo}</div>
-              {inst.documentos&&(
-                <div style={{background:C.bg,borderRadius:8,padding:"8px 10px"}}>
-                  <div style={{fontSize:10,fontWeight:700,color:C.grey,textTransform:"uppercase",letterSpacing:0.3,marginBottom:4}}>Documentos</div>
-                  <div style={{fontSize:12,color:C.body,lineHeight:1.5}}>{inst.documentos}</div>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
+        {instrucoes.length>0&&<div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+          <button onClick={()=>{if(window.confirm("Limpar todos os documentos de instrução?")) saveInstrucoes([]);}} style={{...btn(C.white,isMobile),color:C.red,border:`1px solid ${C.red}22`}}><Trash2 size={13}/>Limpar Documentos</button>
+        </div>}
       </div>
     );
   };
 
 
-  // ══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════════
   // ── AI SECTION (análise técnica rápida) ───────────────────────────────────
   // ══════════════════════════════════════════════════════════════════════════
   const AISection = () => (
@@ -1272,6 +1299,7 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
       </div>
       <CaseDetail/>
       <ApoliceDetail/>
+      <InstDetail/>
     </div>
   );
 }
