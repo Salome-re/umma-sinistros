@@ -190,7 +190,7 @@ const parseFile = (file, onOk, onErr) => {
 // ── Parse PDF text via pdfjs-dist ─────────────────────────────────────────
 const extractPdfText = async (file) => {
   const pdfjsLib = await import('pdfjs-dist');
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+  pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
   let fullText = '';
@@ -487,7 +487,7 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
         setAvisoRes(parsed);
         if (parsed.email_sugerido) setAvisoEmail(parsed.email_sugerido);
       } else {
-        setAvisoErr("Resposta inválida da IA. Verifique a chave ANTHROPIC_API_KEY.");
+        setAvisoErr("Resposta inválida da IA. Verifique se a variável OPENAI_API_KEY está configurada no painel da Vercel.");
       }
     } catch(e) {
       setAvisoErr("Erro ao conectar com a IA: "+e.message);
