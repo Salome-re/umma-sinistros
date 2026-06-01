@@ -63,15 +63,23 @@ const CNSP_460_DATE  = new Date("2023-01-01");
 const LEI_15040_DATE = new Date("2025-12-11");
 
 // ── Status mapping ─────────────────────────────────────────────────────────
+// STATUS_MAP expandido conforme Obs.2 do relatório de João (01/06/2026):
+// P. SEGURADORA, P.DOC SEGURADO, P.DOC TERCEIRO, AGUARD. RECL 3º etc. = Em Regulação
+// Encerrado inclui todas as variações sem indenização
 const STATUS_MAP = {
   "EM REGULAÇÃO":"Em Regulação","PENDENTE - PRAZO NORMAL":"Em Regulação","P. REGULADOR":"Em Regulação",
-  "LIQUIDADO":"Liquidado","LITIGIO":"Em Litígio","LITIGIO D&O":"Em Litígio",
-  "P.DOC SEGURADO":"Ag. Documentação","P.DOC TERCEIRO":"Ag. Documentação",
-  "P.VIST SEGURADO":"Ag. Documentação","AGUARD. RECL 3º":"Ag. Documentação",
-  "P. SEGURADORA":"P. Seguradora","RECUSADO / DECLINADO":"Recusado","EXPECTATIVA/SINISTRO":"Expectativa",
+  "P. SEGURADORA":"Em Regulação","P.DOC SEGURADO":"Em Regulação","P.DOC TERCEIRO":"Em Regulação",
+  "P.VIST SEGURADO":"Em Regulação","AGUARD. RECL 3º":"Em Regulação","AGUARD. RECL 3°":"Em Regulação",
+  "P.VIST TERCEIRO":"Em Regulação","P. REGULADOR EXTERNO":"Em Regulação",
+  "PENDENTE SEGURADORA":"Em Regulação","PENDENTE DOC":"Em Regulação",
+  "LIQUIDADO":"Liquidado","LIQUIDADO PARCIAL":"Liquidado",
+  "LITIGIO":"Em Litígio","LITÍGIO":"Em Litígio","LITIGIO D&O":"Em Litígio","LITÍGIO D&O":"Em Litígio",
   "ENCERRADO SEM INDENIZAÇÃO":"Encerrado","ENCERRADO S/INDENIZ.":"Encerrado",
   "ENC. ABAIXO FRANQUIA":"Encerrado","ENC. S/IND AG. RECLAM":"Encerrado",
   "ENC. ABX FQ/ AG.RECLAM":"Encerrado","ENCER.S/ PREJUIZO":"Encerrado",
+  "ENC. S/ PREJUÍZO":"Encerrado","ENCERRADO":"Encerrado",
+  "RECUSADO / DECLINADO":"Recusado","RECUADO/DECLINADO":"Recusado","RECUSADO":"Recusado","DECLINADO":"Recusado",
+  "EXPECTATIVA/SINISTRO":"Expectativa","EXPECTATIVA":"Expectativa",
 };
 const mapStatus = raw => STATUS_MAP[(raw||"").toUpperCase().trim()] || raw || "Em Regulação";
 
@@ -301,6 +309,7 @@ export default function App() {
 
   // ── Metrics ────────────────────────────────────────────────────────────────
   const total    = casos.length;
+  // emReg amplo: conta todos os processos ativos em regulação (Obs.2 do relatório João)
   const emReg    = casos.filter(c=>c.status==="Em Regulação").length;
   const litigio  = casos.filter(c=>c.status==="Em Litígio").length;
   const liquidado= casos.filter(c=>c.status==="Liquidado").length;
@@ -827,20 +836,20 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
   // ══════════════════════════════════════════════════════════════════════════
   const Dashboard = () => (
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
-      {lei15040Count>0&&<AlertBanner color="#065F46" bg="#F0FDF4" border="#6EE7B7" icon="⚖️">
-        <strong>{lei15040Count} caso(s) regidos pela Lei 15.040/2024</strong> — Art. 86 sunset clause · Art. 87 30d pagamento · Art. 88 multa 2%.
-        {sunsetCount>0&&<strong style={{color:"#B91C1C"}}> ⚠️ {sunsetCount} com risco de Decaimento!</strong>}
+      {lei15040Count>0&&<AlertBanner color="#065F46" bg="#F0FDF4" border="#6EE7B7" icon="⚖️" action={sunsetCount>0?()=>{setFRk("Sunset — Decaimento");setSec("casos");}:undefined} actionLabel="Ver casos Sunset →">
+        <strong>{lei15040Count} caso(s) regidos pela Lei 15.040/2024</strong> — Art. 86: 30d do aviso (sunset clause) · Art. 87: 30d para pagar · Art. 88: multa 2%.
+        {sunsetCount>0&&<strong style={{color:"#B91C1C"}}> ⚠️ {sunsetCount} com risco de Decaimento (Art. 86 — prazo da seguradora para recusar expirado)! Clique para ver.</strong>}
       </AlertBanner>}
-      {crit.length>0&&<AlertBanner color="#B91C1C" bg="#FEF2F2" border="#FECACA" icon="⚠️" action={()=>setSec("casos")} actionLabel="Ver →">
-        <strong>{vencidos} vencido(s)</strong> e {altoRisco} com prazo ≤ 7 dias — ação imediata (Circ. SUSEP 621/2021 / Lei 15.040/2024).
+      {crit.length>0&&<AlertBanner color="#B91C1C" bg="#FEF2F2" border="#FECACA" icon="⚠️" action={()=>{setFRk("Vencido");setSec("casos");}} actionLabel="Ver vencidos →">
+        <strong>{vencidos} vencido(s)</strong> e {altoRisco} com prazo ≤ 7 dias — ação imediata (Circ. SUSEP 621/2021 / Lei 15.040/2024). Obs.: prazo suspenso para casos com documentação pendente do segurado (Art. 44, Circ. 621/2021).
       </AlertBanner>}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-        <KPI label="Total de Casos" value={total} color={C.blue} sub={`${emReg} em regulação`}/>
+        <KPI label="Total de Casos" value={total} color={C.blue} sub={`${emReg} em regulação`} onClick={()=>{setFSt("Em Regulação");setSec("casos");}}/>
         <KPI label="Em Litígio" value={litigio} color={C.purple} sub="monitorar"/>
         <KPI label="Vencidos" value={vencidos} color="#EF4444" sub="ação imediata" onClick={()=>{setFRk("Vencido");setSec("casos")}}/>
-        <KPI label="Liquidados" value={liquidado} color={C.green} sub={`${encerrado} encerrados`}/>
+        <KPI label="Liquidados" value={liquidado} color={C.green} sub={`${encerrado} encerrados · ${liquidado+encerrado} findados`} onClick={()=>{setFSt("Liquidado");setSec("casos");}}/>
         <KPI label="Ag. Documentação" value={agDoc} color={C.orange} sub="pendentes"/>
-        <KPI label="Compliance" value={`${compliance}%`} color={compliance>=85?C.green:C.orange} sub={compliance>=85?"✓ meta OK":"▼ abaixo 85%"}/>
+        <KPI label="Compliance SUSEP" value={`${compliance}%`} color={compliance>=85?C.green:C.orange} sub={compliance>=85?"✓ prazo OK":"▼ casos vencidos afetam"}/>
       </div>
       {!isMobile&&(
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
@@ -855,15 +864,25 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
       <div style={card}><div style={{fontWeight:700,fontSize:13,color:C.navy,marginBottom:12}}>Top Produtos / Ramos</div>
         <ResponsiveContainer width="100%" height={isMobile?160:190}><BarChart data={tipoChart} layout="vertical" barSize={12}><CartesianGrid strokeDasharray="3 3" stroke={C.light} horizontal={false}/><XAxis type="number" tick={{fontSize:9,fill:C.grey}} axisLine={false} tickLine={false}/><YAxis type="category" dataKey="n" tick={{fontSize:isMobile?9:10.5,fill:C.grey}} axisLine={false} tickLine={false} width={isMobile?85:105}/><Tooltip contentStyle={{borderRadius:8,fontSize:11}}/><Bar dataKey="v" name="Casos" fill={C.blue} radius={[0,4,4,0]}/></BarChart></ResponsiveContainer>
       </div>
+      <div style={{fontSize:10.5,color:C.grey,padding:"2px 4px",marginBottom:-6}}>* Valores em R$ (BRL). Casos em moeda estrangeira podem ter valores convertidos pela seguradora.</div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-        {[{l:"IMP. Segurada Total",v:fCur(valTotal),c:C.navy},{l:"Total Apurado",v:fCur(valApurado),c:C.blue},
-          {l:"Total Indenizado",v:fCur(valIndeni),c:C.green},{l:"Lei 15.040/2024",v:lei15040Count+" casos",c:C.teal}
+        {[{l:"IMP. Segurada Total (R$)",v:fCur(valTotal),c:C.navy},{l:"Total Apurado (R$)",v:fCur(valApurado),c:C.blue},
+          {l:"Total Indenizado (R$)",v:fCur(valIndeni),c:C.green},{l:"Lei 15.040/2024",v:lei15040Count+" casos",c:C.teal}
         ].map((k,i)=>(
           <div key={i} style={{...card,borderLeft:`3px solid ${k.c}`}}>
             <div style={{fontSize:isMobile?15:18,fontWeight:800,color:k.c}}>{k.v}</div>
             <div style={{fontSize:11,fontWeight:600,color:C.body,marginTop:2}}>{k.l}</div>
           </div>
         ))}
+      </div>
+      <div style={{...card,background:"#F8FAFF",border:`1px solid ${C.light}`}}>
+        <div style={{fontWeight:700,fontSize:12,color:C.navy,marginBottom:8}}>📊 Regras de Cálculo — Transparência</div>
+        <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:8}}>
+          <div style={{fontSize:11.5,color:C.grey,lineHeight:1.6}}><strong style={{color:C.body}}>Em Regulação ({emReg}):</strong> Inclui EM REGULAÇÃO + P. SEGURADORA + P.DOC SEGURADO + P.DOC TERCEIRO + AGUARD. RECL 3º + P.VIST SEGURADO e similares (excluindo LITÍGIO e ENCERRADO).</div>
+          <div style={{fontSize:11.5,color:C.grey,lineHeight:1.6}}><strong style={{color:C.body}}>Compliance ({compliance}%):</strong> % de casos ativos com risco Baixo ou Médio e documentação completa. Meta: ≥85%. Casos vencidos/alto risco reduzem o índice.</div>
+          <div style={{fontSize:11.5,color:C.grey,lineHeight:1.6}}><strong style={{color:C.body}}>Sunset/Decaimento ({sunsetCount}):</strong> Apólices ≥ 11/12/2025 com prazo Art. 86 (&gt;30d do aviso) vencido. Risco é da <em>seguradora</em> perder o direito de recusar cobertura, não do segurado.</div>
+          <div style={{fontSize:11.5,color:C.grey,lineHeight:1.6}}><strong style={{color:C.body}}>Findados ({liquidado+encerrado}):</strong> Liquidado ({liquidado}) + Encerrado sem indenização ({encerrado}) = {liquidado+encerrado} processos concluídos. Valores em R$ (BRL); casos em moeda estrangeira podem ter valores convertidos pela seguradora.</div>
+        </div>
       </div>
     </div>
   );
