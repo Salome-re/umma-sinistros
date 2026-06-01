@@ -76,10 +76,11 @@ const STATUS_DOC_PENDENTE_SEGURADO = new Set([
 // Encerrado inclui todas as variações sem indenização
 const STATUS_MAP = {
   "EM REGULAÇÃO":"Em Regulação","PENDENTE - PRAZO NORMAL":"Em Regulação","P. REGULADOR":"Em Regulação",
-  "P. SEGURADORA":"Em Regulação","P.DOC SEGURADO":"Em Regulação","P.DOC TERCEIRO":"Em Regulação",
-  "P.VIST SEGURADO":"Em Regulação","AGUARD. RECL 3º":"Em Regulação","AGUARD. RECL 3°":"Em Regulação",
-  "P.VIST TERCEIRO":"Em Regulação","P. REGULADOR EXTERNO":"Em Regulação",
-  "PENDENTE SEGURADORA":"Em Regulação","PENDENTE DOC":"Em Regulação",
+  "P. SEGURADORA":"Em Regulação","P. REGULADOR EXTERNO":"Em Regulação","PENDENTE SEGURADORA":"Em Regulação",
+  // Ag. Documentação — pendências de doc do Segurado ou Terceiro (prazo suspenso)
+  "P.DOC SEGURADO":"Ag. Documentação","P.VIST SEGURADO":"Ag. Documentação",
+  "P.DOC TERCEIRO":"Ag. Documentação","P.VIST TERCEIRO":"Ag. Documentação",
+  "AGUARD. RECL 3º":"Ag. Documentação","AGUARD. RECL 3°":"Ag. Documentação","PENDENTE DOC":"Ag. Documentação",
   "LIQUIDADO":"Liquidado","LIQUIDADO PARCIAL":"Liquidado",
   "LITIGIO":"Em Litígio","LITÍGIO":"Em Litígio","LITIGIO D&O":"Em Litígio","LITÍGIO D&O":"Em Litígio",
   "ENCERRADO SEM INDENIZAÇÃO":"Encerrado","ENCERRADO S/INDENIZ.":"Encerrado",
@@ -153,7 +154,8 @@ const enrichRelatorio = raw => {
   const anteriorNorma = !sobreLei15040 && !!dataAvisoDate && dataAvisoDate < normaVigencia;
   const normaVigStr = sobreLei15040 ? "Lei 15.040/2024 (11/12/2025)" :
     normaVigencia === CNSP_460_DATE ? "Res. CNSP 407/2021 (01/04/2021)" : "Circ. SUSEP 621/2021 (12/02/2021)";
-  const emRegulacao = status === "Em Regulação";
+  // emRegulacao: inclui "Ag. Documentação" pois esses casos ainda estão em processo ativo
+  const emRegulacao = status === "Em Regulação" || status === "Ag. Documentação";
 
   // Verifica se o status original indica documentação PENDENTE DO SEGURADO.
   // Nesses casos o prazo legal é SUSPENSO (Art. 44 Circ. SUSEP 621/2021 /
@@ -179,7 +181,7 @@ const enrichRelatorio = raw => {
   else if (["Encerrado","Liquidado","Recusado"].includes(status)) risco="Resolvido";
   else if (emRegulacao) {
     if (anteriorNorma) risco="Anterior à Norma";
-    else if (docPendenteSegurado) risco="Pendente"; // prazo suspenso — não pode ser Vencido
+    else if (docPendenteSegurado) risco="Pendente"; // prazo suspenso (doc pendente do segurado/terceiro)
     else if (sunsetAlert) risco="Sunset — Decaimento";
     else if (!temDoc) risco="Pendente";
     else if (prazoR<0) risco="Vencido";
@@ -336,6 +338,7 @@ export default function App() {
   const emReg    = casos.filter(c=>c.status==="Em Regulação").length;
   const litigio  = casos.filter(c=>c.status==="Em Litígio").length;
   const liquidado= casos.filter(c=>c.status==="Liquidado").length;
+  // agDoc: P.DOC SEGURADO, P.DOC TERCEIRO, P.VIST SEGURADO, P.VIST TERCEIRO, AGUARD. RECL 3º
   const agDoc    = casos.filter(c=>c.status==="Ag. Documentação").length;
   const vencidos = casos.filter(c=>c.risco==="Vencido").length;
   const altoRisco= casos.filter(c=>c.risco==="Alto").length;
@@ -871,7 +874,7 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
         <KPI label="Em Litígio" value={litigio} color={C.purple} sub="monitorar"/>
         <KPI label="Vencidos" value={vencidos} color="#EF4444" sub="ação imediata" onClick={()=>{setFRk("Vencido");setSec("casos")}}/>
         <KPI label="Liquidados" value={liquidado} color={C.green} sub={`${encerrado} encerrados · ${liquidado+encerrado} findados`} onClick={()=>{setFSt("Liquidado");setSec("casos");}}/>
-        <KPI label="Ag. Documentação" value={agDoc} color={C.orange} sub="pendentes"/>
+        <KPI label="Ag. Documentação" value={agDoc} color={C.orange} sub="P.Doc Segurado + Terceiro" onClick={()=>{setFSt("Ag. Documentação");setSec("casos");}}/>
         <KPI label="Compliance SUSEP" value={`${compliance}%`} color={compliance>=85?C.green:C.orange} sub={compliance>=85?"✓ prazo OK":"▼ casos vencidos afetam"}/>
       </div>
       {!isMobile&&(
@@ -901,7 +904,7 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
       <div style={{...card,background:"#F8FAFF",border:`1px solid ${C.light}`}}>
         <div style={{fontWeight:700,fontSize:12,color:C.navy,marginBottom:8}}>📊 Regras de Cálculo — Transparência</div>
         <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:8}}>
-          <div style={{fontSize:11.5,color:C.grey,lineHeight:1.6}}><strong style={{color:C.body}}>Em Regulação ({emReg}):</strong> Inclui EM REGULAÇÃO + P. SEGURADORA + P.DOC SEGURADO + P.DOC TERCEIRO + AGUARD. RECL 3º + P.VIST SEGURADO e similares (excluindo LITÍGIO e ENCERRADO).</div>
+          <div style={{fontSize:11.5,color:C.grey,lineHeight:1.6}}><strong style={{color:C.body}}>Em Regulação ({emReg}):</strong> Inclui EM REGULAÇÃO + P. SEGURADORA + P. REGULADOR e similares (processo ativo sem pendência de doc). Ag. Documentação é exibido separadamente.</div>
           <div style={{fontSize:11.5,color:C.grey,lineHeight:1.6}}><strong style={{color:C.body}}>Compliance ({compliance}%):</strong> % de casos ativos com risco Baixo ou Médio e documentação completa. Meta: ≥85%. Casos vencidos/alto risco reduzem o índice.</div>
           <div style={{fontSize:11.5,color:C.grey,lineHeight:1.6}}><strong style={{color:C.body}}>Sunset/Decaimento ({sunsetCount}):</strong> Apólices ≥ 11/12/2025 com prazo Art. 86 (&gt;30d do aviso) vencido. Risco é da <em>seguradora</em> perder o direito de recusar cobertura, não do segurado.</div>
           <div style={{fontSize:11.5,color:C.grey,lineHeight:1.6}}><strong style={{color:C.body}}>Findados ({liquidado+encerrado}):</strong> Liquidado ({liquidado}) + Encerrado sem indenização ({encerrado}) = {liquidado+encerrado} processos concluídos. Valores em R$ (BRL); casos em moeda estrangeira podem ter valores convertidos pela seguradora.</div>
