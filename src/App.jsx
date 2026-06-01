@@ -117,7 +117,7 @@ const parseBR = s => {
 // ── Enrich sinistro ────────────────────────────────────────────────────────
 const enrichRelatorio = raw => {
   const segurado = raw["SEGURADO"]||"", seguradora = raw["SEGURADORA"]||"";
-  const id = String(raw["Nº SINISTRO"]||raw["N° SINISTRO"]||"").trim()||`SIN-${Math.random().toString(36).slice(2,7).toUpperCase()}`;
+  const id = String(raw["Nº AVISO"]||raw["N° AVISO"]||"").trim()||`SIN-${Math.random().toString(36).slice(2,7).toUpperCase()}`;
   const tipo = raw["PRODUTO"]||"", ramo = raw["RAMO"]||"";
   const regulador = raw["ANALISTA RESPONSÁVEL"]||raw["ANALISTA RESPONSAVEL"]||"";
   const statusRaw = raw["SITUAÇÃO DO SINISTRO"]||raw["SITUACAO DO SINISTRO"]||"";
