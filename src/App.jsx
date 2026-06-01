@@ -417,7 +417,7 @@ export default function App() {
     setAiLd(true); setAiRes(null); setAiErr("");
     const sys=`Especialista sinistros Brasil. Normas: Circ. SUSEP 621/2021 (30d danos), Res. CNSP 407/2021 (grandes riscos), Lei 15.040/2024 (Art. 86 sunset 30d, Art. 87 pagamento 30d, Art. 88 multa 2%). Retorne SOMENTE JSON: {"classificacao":"Simples"|"Complexo","justificativa":"str","prazoLegal":num,"normas":["arr"],"risco":"Baixo"|"Médio"|"Alto"|"Crítico","documentos":["arr"],"acoes":["arr"],"alertas":["arr"],"recomendacao":"str","score":0-100}`;
     try {
-      const r=await fetch("/api/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1200,system:sys,messages:[{role:"user",content:"Analise:\n"+aiTxt}]})});
+      const r=await fetch("/api/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({system:sys,messages:[{role:"user",content:"Analise:\n"+aiTxt}]})});
       const d=await r.json(); const m=(d.content?.[0]?.text||"").match(/\{[\s\S]*\}/);
       if(m) setAiRes(JSON.parse(m[0])); else setAiErr("Resposta inválida.");
     } catch(e){ setAiErr("Erro: "+e.message); }
@@ -474,8 +474,6 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body: JSON.stringify({
-          model:"claude-sonnet-4-20250514",
-          max_tokens:3000,
           system:sys,
           messages:[{role:"user",content:"Aviso de sinistro recebido:\n\n"+avisoTxt}]
         })
