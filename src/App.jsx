@@ -62,6 +62,14 @@ const CNSP_415_DATE  = new Date("2021-07-01");
 const CNSP_460_DATE  = new Date("2023-01-01");
 const LEI_15040_DATE = new Date("2025-12-11");
 
+// ── Status com documentação pendente do SEGURADO (prazo suspenso — Art. 44 Circ. 621/2021)
+// Enquanto o segurado não entrega os documentos, o prazo legal NÃO corre.
+// Esses casos nunca devem ser classificados como "Vencido".
+const STATUS_DOC_PENDENTE_SEGURADO = new Set([
+  "P.DOC SEGURADO","P.VIST SEGURADO","AGUARD. RECL 3º","AGUARD. RECL 3°",
+  "P.DOC TERCEIRO","P.VIST TERCEIRO","PENDENTE DOC",
+]);
+
 // ── Status mapping ─────────────────────────────────────────────────────────
 // STATUS_MAP expandido conforme Obs.2 do relatório de João (01/06/2026):
 // P. SEGURADORA, P.DOC SEGURADO, P.DOC TERCEIRO, AGUARD. RECL 3º etc. = Em Regulação
@@ -137,6 +145,8 @@ const enrichRelatorio = raw => {
   const prazoLegal = isComplexo ? 60 : 30;
   const today = new Date();
   const inicioVigDate = parseBR(inicioVig);
+  // Norma aplicável é determinada pela VIGÊNCIA DA APÓLICE (início de vigência),
+  // não pela data do aviso — conforme Lei 15.040/2024 e normas SUSEP anteriores.
   const sobreLei15040 = !!inicioVigDate && inicioVigDate >= LEI_15040_DATE;
   const dataAvisoDate = parseBR(dataAbertura);
   const normaVigencia = (tipo||"").toUpperCase().includes("GARANTIA") ? CNSP_460_DATE : CNSP_415_DATE;
@@ -144,19 +154,32 @@ const enrichRelatorio = raw => {
   const normaVigStr = sobreLei15040 ? "Lei 15.040/2024 (11/12/2025)" :
     normaVigencia === CNSP_460_DATE ? "Res. CNSP 407/2021 (01/04/2021)" : "Circ. SUSEP 621/2021 (12/02/2021)";
   const emRegulacao = status === "Em Regulação";
-  const dataRefPrazo = sobreLei15040 ? parseBR(dataAbertura) :
+
+  // Verifica se o status original indica documentação PENDENTE DO SEGURADO.
+  // Nesses casos o prazo legal é SUSPENSO (Art. 44 Circ. SUSEP 621/2021 /
+  // Art. 86 §3º Lei 15.040/2024): o caso NUNCA pode ser classificado como "Vencido".
+  const statusOriginalNorm = (statusRaw||"").toUpperCase().trim();
+  const docPendenteSegurado = STATUS_DOC_PENDENTE_SEGURADO.has(statusOriginalNorm);
+
+  // DATA DE REFERÊNCIA DO PRAZO:
+  // - Doc pendente do segurado → prazo SUSPENSO (null)
+  // - Lei 15.040/2024 → conta a partir da DATA AVISO
+  // - Normas anteriores → conta a partir da DATA INCLUSÃO (documentação completa entregue)
+  const dataRefPrazo = docPendenteSegurado ? null :
+    sobreLei15040 ? parseBR(dataAbertura) :
     (emRegulacao && !anteriorNorma ? parseBR(dataDocCompleta) : null);
   const temDoc = !!dataRefPrazo;
   const diasRef = temDoc ? Math.floor((today - dataRefPrazo)/86400000) : 0;
   const prazoR = temDoc ? prazoLegal - diasRef : null;
-  const sunsetAlert = sobreLei15040 && emRegulacao && temDoc && diasRef >= 30;
+  const sunsetAlert = sobreLei15040 && emRegulacao && !docPendenteSegurado && temDoc && diasRef >= 30;
+
   let risco = "Resolvido";
   if (status==="Em Litígio") risco="Litígio";
   else if (status==="Expectativa") risco="Expectativa";
   else if (["Encerrado","Liquidado","Recusado"].includes(status)) risco="Resolvido";
-  else if (status==="Ag. Documentação"||status==="P. Seguradora") risco="Pendente";
   else if (emRegulacao) {
     if (anteriorNorma) risco="Anterior à Norma";
+    else if (docPendenteSegurado) risco="Pendente"; // prazo suspenso — não pode ser Vencido
     else if (sunsetAlert) risco="Sunset — Decaimento";
     else if (!temDoc) risco="Pendente";
     else if (prazoR<0) risco="Vencido";
