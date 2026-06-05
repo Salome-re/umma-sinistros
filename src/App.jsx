@@ -58,9 +58,10 @@ const NORMAS = [
 ];
 
 // ── Date constants ─────────────────────────────────────────────────────────
-const CNSP_415_DATE  = new Date("2021-07-01");
-const CNSP_460_DATE  = new Date("2023-01-01");
-const LEI_15040_DATE = new Date("2025-12-11");
+// Datas usam construtor local (ano, mês-1, dia) para evitar problema de UTC vs fuso local
+const CNSP_415_DATE  = new Date(2021, 6, 1);   // 01/07/2021
+const CNSP_460_DATE  = new Date(2023, 0, 1);   // 01/01/2023
+const LEI_15040_DATE = new Date(2025, 11, 11); // 11/12/2025 inclusive
 
 // ── Status com documentação pendente do SEGURADO (prazo suspenso — Art. 44 Circ. 621/2021)
 // Enquanto o segurado não entrega os documentos, o prazo legal NÃO corre.
@@ -84,9 +85,9 @@ const STATUS_MAP = {
   "LIQUIDADO":"Liquidado","LIQUIDADO PARCIAL":"Liquidado",
   "LITIGIO":"Em Litígio","LITÍGIO":"Em Litígio","LITIGIO D&O":"Em Litígio","LITÍGIO D&O":"Em Litígio",
   "ENCERRADO SEM INDENIZAÇÃO":"Encerrado","ENCERRADO S/INDENIZ.":"Encerrado",
-  "ENC. ABAIXO FRANQUIA":"Encerrado","ENC. S/IND AG. RECLAM":"Encerrado",
-  "ENC. ABX FQ/ AG.RECLAM":"Encerrado","ENCER.S/ PREJUIZO":"Encerrado",
-  "ENC. S/ PREJUÍZO":"Encerrado","ENCERRADO":"Encerrado",
+  "ENC. ABAIXO FRANQUIA":"Encerrado","ENC. S/IND AG. RECLAM":"Encerrado","ENC. S/IND AG. RECLAM.":"Encerrado",
+  "ENC. ABX FQ/ AG.RECLAM":"Encerrado","ENC. ABX FQ/ AG. RECLAM.":"Encerrado","ENCER.S/ PREJUIZO":"Encerrado",
+  "ENC. S/ PREJUÍZO":"Encerrado","ENCERRADO S/ INDENIZ.":"Encerrado","ENCERRADO S/INDENIZ":"Encerrado","ENCERRADO":"Encerrado",
   "RECUSADO / DECLINADO":"Recusado","RECUADO/DECLINADO":"Recusado","RECUSADO":"Recusado","DECLINADO":"Recusado",
   "EXPECTATIVA/SINISTRO":"Expectativa","EXPECTATIVA":"Expectativa",
 };
@@ -148,7 +149,9 @@ const enrichRelatorio = raw => {
   const inicioVigDate = parseBR(inicioVig);
   // Norma aplicável é determinada pela VIGÊNCIA DA APÓLICE (início de vigência),
   // não pela data do aviso — conforme Lei 15.040/2024 e normas SUSEP anteriores.
-  const sobreLei15040 = !!inicioVigDate && inicioVigDate >= LEI_15040_DATE;
+  // Normaliza para comparação apenas de data (sem hora) — garante que 11/12/2025 seja incluído
+  const inicioVigNorm = inicioVigDate ? new Date(inicioVigDate.getFullYear(), inicioVigDate.getMonth(), inicioVigDate.getDate()) : null;
+  const sobreLei15040 = !!inicioVigNorm && inicioVigNorm >= LEI_15040_DATE;
   const dataAvisoDate = parseBR(dataAbertura);
   const normaVigencia = (tipo||"").toUpperCase().includes("GARANTIA") ? CNSP_460_DATE : CNSP_415_DATE;
   const anteriorNorma = !sobreLei15040 && !!dataAvisoDate && dataAvisoDate < normaVigencia;
@@ -164,15 +167,19 @@ const enrichRelatorio = raw => {
   const docPendenteSegurado = STATUS_DOC_PENDENTE_SEGURADO.has(statusOriginalNorm);
 
   // DATA DE REFERÊNCIA DO PRAZO:
-  // - Doc pendente do segurado → prazo SUSPENSO (null)
-  // - Lei 15.040/2024 → conta a partir da DATA AVISO
-  // - Normas anteriores → conta a partir da DATA INCLUSÃO (documentação completa entregue)
+  // - Doc pendente do segurado (status P.DOC SEGURADO etc.) → prazo SUSPENSO
+  // - Lei 15.040/2024 (apólice >= 11/12/2025) → prazo conta a partir da DATA AVISO
+  // - Normas anteriores (Circ. 621/2021) → prazo conta a partir da DATA INCLUSÃO
+  //   Se DATA INCLUSÃO vazia → prazo ainda não iniciou = Pendente (nunca Vencido)
+  // - Anterior à norma → sem cálculo de prazo
   const dataRefPrazo = docPendenteSegurado ? null :
+    anteriorNorma ? null :
     sobreLei15040 ? parseBR(dataAbertura) :
-    (emRegulacao && !anteriorNorma ? parseBR(dataDocCompleta) : null);
+    (emRegulacao ? parseBR(dataDocCompleta) : null);
   const temDoc = !!dataRefPrazo;
   const diasRef = temDoc ? Math.floor((today - dataRefPrazo)/86400000) : 0;
   const prazoR = temDoc ? prazoLegal - diasRef : null;
+  // Sunset: somente Lei 15.040, sem doc pendente, prazo Art.86 (30d) expirado
   const sunsetAlert = sobreLei15040 && emRegulacao && !docPendenteSegurado && temDoc && diasRef >= 30;
 
   let risco = "Resolvido";
@@ -334,15 +341,20 @@ export default function App() {
 
   // ── Metrics ────────────────────────────────────────────────────────────────
   const total    = casos.length;
-  // emReg amplo: conta todos os processos ativos em regulação (Obs.2 do relatório João)
-  const emReg    = casos.filter(c=>c.status==="Em Regulação").length;
+  // emReg: SOMENTE status literal "EM REGULAÇÃO" (Obs.2 João 05/06/2026 — são 51 casos)
+  const emReg    = casos.filter(c=>c.statusOriginal&&(c.statusOriginal||"").toUpperCase().trim()==="EM REGULAÇÃO").length;
   const litigio  = casos.filter(c=>c.status==="Em Litígio").length;
   const liquidado= casos.filter(c=>c.status==="Liquidado").length;
   // agDoc: P.DOC SEGURADO, P.DOC TERCEIRO, P.VIST SEGURADO, P.VIST TERCEIRO, AGUARD. RECL 3º
   const agDoc    = casos.filter(c=>c.status==="Ag. Documentação").length;
   const vencidos = casos.filter(c=>c.risco==="Vencido").length;
   const altoRisco= casos.filter(c=>c.risco==="Alto").length;
+  // encerrado: todas as variações de encerramento sem indenização (Obs.4 João)
   const encerrado= casos.filter(c=>c.status==="Encerrado").length;
+  // recusado: RECUSADO/DECLINADO também é findado (Obs.4 João)
+  const recusado = casos.filter(c=>c.status==="Recusado").length;
+  // findados: liquidado + encerrado + recusado = 535 + 284 + ... = 819
+  const findados = liquidado + encerrado + recusado;
   const lei15040Count = casos.filter(c=>c.sobreLei15040).length;
   const sunsetCount   = casos.filter(c=>c.risco==="Sunset — Decaimento").length;
   const valTotal = casos.reduce((s,c)=>s+(c.importanciaSegurada||0),0);
@@ -479,7 +491,7 @@ export default function App() {
     const sys = `Você é um especialista em regulação de sinistros da Umma Corretora de Seguros.
 Ao receber um aviso de sinistro (por e-mail ou manual), você deve:
 1. Identificar o cliente/segurado na base de apólices
-2. Identificar a apólice vigente correspondente
+2. Identificar a apólice vigente correspondente — REGRA CRÍTICA: se o texto do aviso mencionar EXPLICITAMENTE um número de apólice (ex: "Apólice 5400057713", "apólice nº 9800020172017", "apólice 2017" etc.), use ESSE número como apolice_identificada, mesmo que a base de apólices contenha outro número. O número informado no aviso tem PRIORIDADE ABSOLUTA sobre qualquer inferência da base.
 3. Determinar a complexidade do sinistro (Simples/Complexo)
 4. Informar os prazos de regulação aplicáveis (Circ. SUSEP 621/2021, Lei 15.040/2024, Res. CNSP 407/2021)
 5. Listar os documentos necessários para a regulação
@@ -873,7 +885,7 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
         <KPI label="Total de Casos" value={total} color={C.blue} sub={`${emReg} em regulação`} onClick={()=>{setFSt("Em Regulação");setSec("casos");}}/>
         <KPI label="Em Litígio" value={litigio} color={C.purple} sub="monitorar"/>
         <KPI label="Vencidos" value={vencidos} color="#EF4444" sub="ação imediata" onClick={()=>{setFRk("Vencido");setSec("casos")}}/>
-        <KPI label="Liquidados" value={liquidado} color={C.green} sub={`${encerrado} encerrados · ${liquidado+encerrado} findados`} onClick={()=>{setFSt("Liquidado");setSec("casos");}}/>
+        <KPI label="Liquidados" value={liquidado} color={C.green} sub={`${encerrado} enc. · ${recusado} recus. · ${findados} findados`} onClick={()=>{setFSt("Liquidado");setSec("casos");}}/>
         <KPI label="Ag. Documentação" value={agDoc} color={C.orange} sub="P.Doc Segurado + Terceiro" onClick={()=>{setFSt("Ag. Documentação");setSec("casos");}}/>
         <KPI label="Compliance SUSEP" value={`${compliance}%`} color={compliance>=85?C.green:C.orange} sub={compliance>=85?"✓ prazo OK":"▼ casos vencidos afetam"}/>
       </div>
@@ -907,7 +919,7 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
           <div style={{fontSize:11.5,color:C.grey,lineHeight:1.6}}><strong style={{color:C.body}}>Em Regulação ({emReg}):</strong> Inclui EM REGULAÇÃO + P. SEGURADORA + P. REGULADOR e similares (processo ativo sem pendência de doc). Ag. Documentação é exibido separadamente.</div>
           <div style={{fontSize:11.5,color:C.grey,lineHeight:1.6}}><strong style={{color:C.body}}>Compliance ({compliance}%):</strong> % de casos ativos com risco Baixo ou Médio e documentação completa. Meta: ≥85%. Casos vencidos/alto risco reduzem o índice.</div>
           <div style={{fontSize:11.5,color:C.grey,lineHeight:1.6}}><strong style={{color:C.body}}>Sunset/Decaimento ({sunsetCount}):</strong> Apólices ≥ 11/12/2025 com prazo Art. 86 (&gt;30d do aviso) vencido. Risco é da <em>seguradora</em> perder o direito de recusar cobertura, não do segurado.</div>
-          <div style={{fontSize:11.5,color:C.grey,lineHeight:1.6}}><strong style={{color:C.body}}>Findados ({liquidado+encerrado}):</strong> Liquidado ({liquidado}) + Encerrado sem indenização ({encerrado}) = {liquidado+encerrado} processos concluídos. Valores em R$ (BRL); casos em moeda estrangeira podem ter valores convertidos pela seguradora.</div>
+          <div style={{fontSize:11.5,color:C.grey,lineHeight:1.6}}><strong style={{color:C.body}}>Findados ({findados}):</strong> Liquidado ({liquidado}) + Encerrado ({encerrado}) + Recusado/Declinado ({recusado}) = {findados} processos concluídos (meta: 819). Valores em R$ (BRL); casos em moeda estrangeira podem ter valores convertidos pela seguradora.</div>
         </div>
       </div>
     </div>
