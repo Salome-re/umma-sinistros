@@ -97,12 +97,12 @@ const mapStatus = raw => STATUS_MAP[(raw||"").toUpperCase().trim()] || raw || "E
 const statC = s => ({"Em Regulação":C.blue,"Liquidado":C.green,"Em Litígio":C.purple,
   "Ag. Documentação":C.orange,"Encerrado":C.grey,"Recusado":"#EF4444",
   "Expectativa":C.cyan,"P. Seguradora":C.amber}[s]||C.grey);
-const riskC = r => ({Vencido:"#EF4444",Alto:C.orange,Médio:C.amber,Baixo:C.green,
+const riskC = r => ({Vencido:"#EF4444","Vencido sob Lei 15.040":"#B91C1C",Alto:C.orange,Médio:C.amber,Baixo:C.green,
   Pendente:C.grey,Litígio:C.purple,Expectativa:C.cyan,Resolvido:C.green,
-  "Anterior à Norma":C.cyan,"Sunset — Decaimento":"#B91C1C"}[r]||C.grey);
-const riskBg= r => ({Vencido:"#FEF2F2",Alto:"#FFF7ED",Médio:"#FFFBEB",Baixo:"#F0FDF4",
+  "Anterior à Norma":C.cyan,"Em Regulação":C.blue,"Sunset — Decaimento":"#B91C1C"}[r]||C.grey);
+const riskBg= r => ({Vencido:"#FEF2F2","Vencido sob Lei 15.040":"#FEF2F2",Alto:"#FFF7ED",Médio:"#FFFBEB",Baixo:"#F0FDF4",
   Pendente:"#F9FAFB",Litígio:"#F5F3FF",Expectativa:"#ECFEFF",Resolvido:"#F0FDF4",
-  "Anterior à Norma":"#ECFEFF","Sunset — Decaimento":"#FEF2F2"}[r]||"#F9FAFB");
+  "Anterior à Norma":"#ECFEFF","Em Regulação":"#EFF6FF","Sunset — Decaimento":"#FEF2F2"}[r]||"#F9FAFB");
 
 // ── Product classification ─────────────────────────────────────────────────
 const COMPLEXOS = ["OPERADOR PORTUARIO","OPERADOR PORTUÁRIO","D&O","RC D&O","E&O","RC E&O",
@@ -166,20 +166,20 @@ const enrichRelatorio = raw => {
   const statusOriginalNorm = (statusRaw||"").toUpperCase().trim();
   const docPendenteSegurado = STATUS_DOC_PENDENTE_SEGURADO.has(statusOriginalNorm);
 
-  // DATA DE REFERÊNCIA DO PRAZO:
-  // - Doc pendente do segurado (status P.DOC SEGURADO etc.) → prazo SUSPENSO
-  // - Lei 15.040/2024 (apólice >= 11/12/2025) → prazo conta a partir da DATA AVISO
-  // - Normas anteriores (Circ. 621/2021) → prazo conta a partir da DATA INCLUSÃO
-  //   Se DATA INCLUSÃO vazia → prazo ainda não iniciou = Pendente (nunca Vencido)
-  // - Anterior à norma → sem cálculo de prazo
-  const dataRefPrazo = docPendenteSegurado ? null :
-    anteriorNorma ? null :
-    sobreLei15040 ? parseBR(dataAbertura) :
-    (emRegulacao ? parseBR(dataDocCompleta) : null);
+  // DATA DE REFERÊNCIA DO PRAZO — REGRA DEFINITIVA (João, 09/06/2026):
+  // • Apólices anteriores a 11/12/2025 → classificadas como "Anterior à Norma" SEM EXCEÇÃO.
+  //   Não há cálculo de prazo, não há Vencido, não há Sunset para essas apólices.
+  // • Apólices >= 11/12/2025 (Lei 15.040/2024):
+  //   - Doc pendente do segurado → prazo SUSPENSO (Art. 86 §3º) → risco = Pendente
+  //   - Prazo conta a partir da DATA AVISO (pois a lei exige que os prazos se iniciem
+  //     quando as informações e documentações sejam suficientes — Art. 86 Lei 15.040/2024)
+  //   - Se prazo expirou (> 30d): risco = "Vencido sob Lei 15.040" (engloba Sunset)
+  //   - Se prazo entre 1-30d: risco proporcional (Alto/Médio/Baixo)
+  const dataRefPrazo = (!sobreLei15040 || docPendenteSegurado) ? null : parseBR(dataAbertura);
   const temDoc = !!dataRefPrazo;
   const diasRef = temDoc ? Math.floor((today - dataRefPrazo)/86400000) : 0;
   const prazoR = temDoc ? prazoLegal - diasRef : null;
-  // Sunset: somente Lei 15.040, sem doc pendente, prazo Art.86 (30d) expirado
+  // sunsetAlert: mantido internamente para exibir aviso adicional no detalhe do caso
   const sunsetAlert = sobreLei15040 && emRegulacao && !docPendenteSegurado && temDoc && diasRef >= 30;
 
   let risco = "Resolvido";
@@ -187,11 +187,13 @@ const enrichRelatorio = raw => {
   else if (status==="Expectativa") risco="Expectativa";
   else if (["Encerrado","Liquidado","Recusado"].includes(status)) risco="Resolvido";
   else if (emRegulacao) {
-    if (anteriorNorma) risco="Anterior à Norma";
-    else if (docPendenteSegurado) risco="Pendente"; // prazo suspenso (doc pendente do segurado/terceiro)
-    else if (sunsetAlert) risco="Sunset — Decaimento";
+    // Apólice anterior a 11/12/2025 → SEMPRE "Anterior à Norma" (João, 09/06/2026)
+    if (!sobreLei15040) risco="Anterior à Norma";
+    // Apólice sob Lei 15.040/2024 (>= 11/12/2025)
+    else if (docPendenteSegurado) risco="Pendente"; // prazo suspenso — doc pendente
     else if (!temDoc) risco="Pendente";
-    else if (prazoR<0) risco="Vencido";
+    // Prazo expirado (> 30d): "Vencido sob Lei 15.040" — engloba Sunset (João, 09/06/2026)
+    else if (prazoR<0) risco="Vencido sob Lei 15.040";
     else if (prazoR<=7) risco="Alto";
     else if (prazoR<=15) risco="Médio";
     else risco="Baixo";
@@ -347,7 +349,7 @@ export default function App() {
   const liquidado= casos.filter(c=>c.status==="Liquidado").length;
   // agDoc: P.DOC SEGURADO, P.DOC TERCEIRO, P.VIST SEGURADO, P.VIST TERCEIRO, AGUARD. RECL 3º
   const agDoc    = casos.filter(c=>c.status==="Ag. Documentação").length;
-  const vencidos = casos.filter(c=>c.risco==="Vencido").length;
+  const vencidos = casos.filter(c=>c.risco==="Vencido sob Lei 15.040").length;
   const altoRisco= casos.filter(c=>c.risco==="Alto").length;
   // encerrado: todas as variações de encerramento sem indenização (Obs.4 João)
   const encerrado= casos.filter(c=>c.status==="Encerrado").length;
@@ -356,28 +358,29 @@ export default function App() {
   // findados: liquidado + encerrado + recusado = 535 + 284 + ... = 819
   const findados = liquidado + encerrado + recusado;
   const lei15040Count = casos.filter(c=>c.sobreLei15040).length;
-  const sunsetCount   = casos.filter(c=>c.risco==="Sunset — Decaimento").length;
+  // sunsetAlert ainda existe internamente; o risco "Vencido sob Lei 15.040" engloba sunset
+  const sunsetCount   = casos.filter(c=>c.sunsetAlert).length;
   const valTotal = casos.reduce((s,c)=>s+(c.importanciaSegurada||0),0);
   const valApurado=casos.reduce((s,c)=>s+(c.apurado||0),0);
   const valIndeni= casos.reduce((s,c)=>s+(c.indenizado||0),0);
-  const crit     = casos.filter(c=>["Vencido","Alto","Sunset — Decaimento"].includes(c.risco));
+  const crit     = casos.filter(c=>["Vencido sob Lei 15.040","Alto"].includes(c.risco));
   const activeCases = casos.filter(c=>["Em Regulação","Ag. Documentação","P. Seguradora"].includes(c.status));
   const compliance = activeCases.length>0?Math.round(casos.filter(c=>["Baixo","Médio"].includes(c.risco)&&c.temDocCompleta).length/activeCases.length*100):100;
 
   // ── Charts ─────────────────────────────────────────────────────────────────
   const stChart = Object.entries(casos.reduce((a,c)=>{a[c.status]=(a[c.status]||0)+1;return a},{}))
     .map(([n,v])=>({n,v,c:statC(n)})).sort((a,b)=>b.v-a.v).slice(0,6);
-  const rkChart = [{n:"Vencido",v:vencidos,c:"#EF4444"},{n:"Alto",v:altoRisco,c:C.orange},
+  const rkChart = [{n:"Vencido Lei 15.040",v:vencidos,c:"#B91C1C"},{n:"Alto",v:altoRisco,c:C.orange},
     {n:"Médio",v:casos.filter(c=>c.risco==="Médio").length,c:C.amber},
     {n:"Baixo",v:casos.filter(c=>c.risco==="Baixo").length,c:C.green},
     {n:"Litígio",v:litigio,c:C.purple},{n:"Pendente",v:agDoc,c:C.grey},
-    {n:"Sunset",v:sunsetCount,c:"#B91C1C"}].filter(d=>d.v>0);
+    {n:"Anterior Norma",v:casos.filter(c=>c.risco==="Anterior à Norma").length,c:C.cyan}].filter(d=>d.v>0);
   const tipoChart=[...new Set(casos.map(c=>c.tipo))].filter(Boolean)
     .map(t=>({n:t.length>14?t.slice(0,14)+"…":t,v:casos.filter(c=>c.tipo===t).length}))
     .sort((a,b)=>b.v-a.v).slice(0,6);
 
   const ALL_ST=["Todos","Em Regulação","Ag. Documentação","Em Litígio","Liquidado","Encerrado","Recusado","Expectativa","P. Seguradora"];
-  const ALL_RK=["Todos","Vencido","Sunset — Decaimento","Alto","Médio","Baixo","Litígio","Pendente","Resolvido","Expectativa","Anterior à Norma"];
+  const ALL_RK=["Todos","Vencido sob Lei 15.040","Alto","Médio","Baixo","Litígio","Pendente","Resolvido","Expectativa","Anterior à Norma","Em Regulação"];
   const filtrados = casos.filter(c=>{
     const ms=fSt==="Todos"||c.status===fSt, mr=fRk==="Todos"||c.risco===fRk;
     const mb=!srch||[c.id,c.segurado,c.tipo,c.seguradora,c.regulador,c.ramo].some(f=>(f||"").toLowerCase().includes(srch.toLowerCase()));
@@ -394,8 +397,8 @@ export default function App() {
       setImp(false);
       const valid = enriched.filter(c=>c.segurado&&c.seguradora);
       const logs=[{t:"ok",m:`✓ ${rawCount} linhas lidas.`}];
-      const vn=valid.filter(c=>c.risco==="Vencido").length;
-      if(vn>0) logs.push({t:"err",m:`⚠ ${vn} caso(s) com prazo VENCIDO.`});
+      const vn=valid.filter(c=>c.risco==="Vencido sob Lei 15.040").length;
+      if(vn>0) logs.push({t:"err",m:`⚠ ${vn} caso(s) VENCIDO(S) sob Lei 15.040/2024 — ação imediata necessária.`});
       const lei=valid.filter(c=>c.sobreLei15040).length;
       if(lei>0) logs.push({t:"ok",m:`⚖️ ${lei} caso(s) regidos pela Lei 15.040/2024.`});
       logs.push({t:"ok",m:`✓ ${valid.length} casos importados com sucesso.`});
@@ -874,17 +877,17 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
   // ══════════════════════════════════════════════════════════════════════════
   const Dashboard = () => (
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
-      {lei15040Count>0&&<AlertBanner color="#065F46" bg="#F0FDF4" border="#6EE7B7" icon="⚖️" action={sunsetCount>0?()=>{setFRk("Sunset — Decaimento");setSec("casos");}:undefined} actionLabel="Ver casos Sunset →">
-        <strong>{lei15040Count} caso(s) regidos pela Lei 15.040/2024</strong> — Art. 86: 30d do aviso (sunset clause) · Art. 87: 30d para pagar · Art. 88: multa 2%.
-        {sunsetCount>0&&<strong style={{color:"#B91C1C"}}> ⚠️ {sunsetCount} com risco de Decaimento (Art. 86 — prazo da seguradora para recusar expirado)! Clique para ver.</strong>}
+      {lei15040Count>0&&<AlertBanner color="#065F46" bg="#F0FDF4" border="#6EE7B7" icon="⚖️" action={vencidos>0?()=>{setFRk("Vencido sob Lei 15.040");setSec("casos");}:undefined} actionLabel="Ver vencidos Lei 15.040 →">
+        <strong>{lei15040Count} caso(s) regidos pela Lei 15.040/2024</strong> — Art. 86: prazo inicia quando documentações são suficientes (30d) · Art. 87: 30d para pagar · Art. 88: multa 2%.
+        {vencidos>0&&<strong style={{color:"#B91C1C"}}> ⚠️ {vencidos} com prazo vencido sob Lei 15.040 (Art. 86 — ação imediata)! Clique para ver.</strong>}
       </AlertBanner>}
-      {crit.length>0&&<AlertBanner color="#B91C1C" bg="#FEF2F2" border="#FECACA" icon="⚠️" action={()=>{setFRk("Vencido");setSec("casos");}} actionLabel="Ver vencidos →">
+      {crit.length>0&&<AlertBanner color="#B91C1C" bg="#FEF2F2" border="#FECACA" icon="⚠️" action={()=>{setFRk("Vencido sob Lei 15.040");setSec("casos");}} actionLabel="Ver vencidos →">
         <strong>{vencidos} vencido(s)</strong> e {altoRisco} com prazo ≤ 7 dias — ação imediata (Circ. SUSEP 621/2021 / Lei 15.040/2024). Obs.: prazo suspenso para casos com documentação pendente do segurado (Art. 44, Circ. 621/2021).
       </AlertBanner>}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
         <KPI label="Total de Casos" value={total} color={C.blue} sub={`${emReg} em regulação`} onClick={()=>{setFSt("Em Regulação");setSec("casos");}}/>
         <KPI label="Em Litígio" value={litigio} color={C.purple} sub="monitorar"/>
-        <KPI label="Vencidos" value={vencidos} color="#EF4444" sub="ação imediata" onClick={()=>{setFRk("Vencido");setSec("casos")}}/>
+        <KPI label="Vencidos Lei 15.040" value={vencidos} color="#B91C1C" sub="ação imediata" onClick={()=>{setFRk("Vencido sob Lei 15.040");setSec("casos")}}/>
         <KPI label="Liquidados" value={liquidado} color={C.green} sub={`${encerrado} enc. · ${recusado} recus. · ${findados} findados`} onClick={()=>{setFSt("Liquidado");setSec("casos");}}/>
         <KPI label="Ag. Documentação" value={agDoc} color={C.orange} sub="P.Doc Segurado + Terceiro" onClick={()=>{setFSt("Ag. Documentação");setSec("casos");}}/>
         <KPI label="Compliance SUSEP" value={`${compliance}%`} color={compliance>=85?C.green:C.orange} sub={compliance>=85?"✓ prazo OK":"▼ casos vencidos afetam"}/>
