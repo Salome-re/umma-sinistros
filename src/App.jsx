@@ -1568,9 +1568,10 @@ Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),
     const RED = "CC0000";
 
     // Helper: adicionar header UMMA em cada slide (logo esquerdo + ícone direito)
+    // Usa logo dark (texto navy) em slides com fundo branco para legibilidade
     const addUmmaHeader = (slide) => {
       slide.background = { color: WHITE };
-      slide.addImage({ path: "/assets/umma_logo.png", x: 0.3, y: 0.2, w: 1.0, h: 0.7 });
+      slide.addImage({ path: "/assets/umma_logo_dark.png", x: 0.3, y: 0.2, w: 1.0, h: 0.7 });
       slide.addImage({ path: "/assets/umma_icon.png", x: 8.5, y: 0.15, w: 0.7, h: 0.3 });
     };
 
