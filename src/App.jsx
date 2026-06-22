@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import * as XLSX from "xlsx";
+import PostalMime from "postal-mime";
+import MsgReader from "@kenjiuno/msgreader";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts";
 import { AlertTriangle, CheckCircle, Upload, BarChart2, Home, BookOpen, Shield, X, Eye, Search, Zap, Download, AlertCircle, Database, RefreshCw, CheckSquare, FileSpreadsheet, Menu, ChevronDown, ChevronUp, FileText, Mail, Plus, Trash2, Copy, FileCheck, Clipboard } from "lucide-react";
 
@@ -295,6 +297,8 @@ export default function App() {
 
   // ── Aviso de sinistro state ────────────────────────────────────────────────
   const [avisoTxt,  setAvisoTxt]  = useState("");
+  const [emailProcessing, setEmailProcessing] = useState(false);
+  const [emailLog, setEmailLog] = useState([]);
   const [avisoRes,  setAvisoRes]  = useState(null);
   const [avisoLd,   setAvisoLd]   = useState(false);
   const [avisoErr,  setAvisoErr]  = useState("");
@@ -753,6 +757,139 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
   };
 
 
+  // ── Processamento de e-mail (drag & drop .eml/.msg) ──────────────────────
+  const processEmailFile = async (file) => {
+    setEmailProcessing(true);
+    setEmailLog([{t:"ok",m:`Processando: ${file.name}...`}]);
+    try {
+      const ext = file.name.split(".").pop().toLowerCase();
+      let body = "", subject = "", from = "", attachments = [];
+
+      if (ext === "eml") {
+        const buffer = await file.arrayBuffer();
+        const parser = new PostalMime();
+        const email = await parser.parse(buffer);
+        body = email.text || email.html?.replace(/<[^>]+>/g," ").replace(/\s+/g," ") || "";
+        subject = email.subject || "";
+        from = email.from?.address || email.from?.text || "";
+        attachments = (email.attachments || []).map(a => ({
+          filename: a.filename || "attachment",
+          contentType: a.mimeType || "",
+          content: a.content // Uint8Array
+        }));
+      } else if (ext === "msg") {
+        const buffer = await file.arrayBuffer();
+        const reader = new MsgReader(buffer);
+        const msgData = reader.getFileData();
+        body = msgData.body || "";
+        subject = msgData.subject || "";
+        from = msgData.senderEmail || msgData.senderName || "";
+        attachments = (msgData.attachments || []).map((a, idx) => {
+          const attData = reader.getAttachment(idx);
+          return {
+            filename: a.fileName || a.name || "attachment",
+            contentType: a.mimeType || "",
+            content: attData?.content ? new Uint8Array(attData.content) : null
+          };
+        });
+      } else {
+        setEmailLog([{t:"err",m:"Formato não suportado. Use .eml ou .msg"}]);
+        setEmailProcessing(false);
+        return;
+      }
+
+      // Montar texto do e-mail
+      let fullText = "";
+      if (from) fullText += `De: ${from}\n`;
+      if (subject) fullText += `Assunto: ${subject}\n\n`;
+      fullText += body.trim();
+
+      setEmailLog(prev => [...prev, {t:"ok",m:`✓ E-mail lido: "${subject || file.name}"`}]);
+
+      // Processar anexos
+      let attachmentTexts = [];
+      for (const att of attachments) {
+        if (!att.content) continue;
+        const attExt = (att.filename||"").split(".").pop().toLowerCase();
+        
+        if (attExt === "pdf") {
+          // Extrair texto do PDF usando pdfjs
+          setEmailLog(prev => [...prev, {t:"ok",m:`📄 Extraindo texto de: ${att.filename}...`}]);
+          try {
+            const pdfjsLib = await import('pdfjs-dist');
+            pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
+            const pdf = await pdfjsLib.getDocument({data: att.content}).promise;
+            let pdfText = '';
+            for (let i = 1; i <= pdf.numPages; i++) {
+              const page = await pdf.getPage(i);
+              const tc = await page.getTextContent();
+              pdfText += tc.items.map(item => item.str).join(' ') + '\n';
+            }
+            if (pdfText.trim()) {
+              attachmentTexts.push(`\n\n--- ANEXO PDF: ${att.filename} ---\n${pdfText.trim()}`);
+              setEmailLog(prev => [...prev, {t:"ok",m:`✓ PDF extraído: ${att.filename} (${pdfText.split(' ').length} palavras)`}]);
+            }
+          } catch(e) {
+            setEmailLog(prev => [...prev, {t:"err",m:`Erro ao ler PDF ${att.filename}: ${e.message}`}]);
+          }
+        } else if (["jpg","jpeg","png","gif","bmp","tiff","tif","webp"].includes(attExt)) {
+          // OCR via GPT-4 Vision
+          setEmailLog(prev => [...prev, {t:"ok",m:`🔍 OCR em imagem: ${att.filename}...`}]);
+          try {
+            const base64 = btoa(String.fromCharCode(...att.content));
+            const mimeType = att.contentType || `image/${attExt === "jpg" ? "jpeg" : attExt}`;
+            const resp = await fetch("/api/ocr", {
+              method: "POST",
+              headers: {"Content-Type": "application/json"},
+              body: JSON.stringify({ image: base64, mimeType })
+            });
+            if (resp.ok) {
+              const data = await resp.json();
+              if (data.text && data.text.trim()) {
+                attachmentTexts.push(`\n\n--- ANEXO IMAGEM (OCR): ${att.filename} ---\n${data.text.trim()}`);
+                setEmailLog(prev => [...prev, {t:"ok",m:`✓ OCR concluído: ${att.filename} (${data.text.split(' ').length} palavras)`}]);
+              }
+            } else {
+              setEmailLog(prev => [...prev, {t:"err",m:`Erro OCR ${att.filename}: ${resp.status}`}]);
+            }
+          } catch(e) {
+            setEmailLog(prev => [...prev, {t:"err",m:`Erro OCR ${att.filename}: ${e.message}`}]);
+          }
+        }
+      }
+
+      // Juntar tudo e colocar na área de texto
+      const finalText = fullText + attachmentTexts.join("");
+      setAvisoTxt(finalText);
+      setEmailLog(prev => [...prev, {t:"ok",m:`✓ Pronto! E-mail + ${attachmentTexts.length} anexo(s) processado(s). Clique "Analisar Aviso com IA".`}]);
+    } catch(err) {
+      setEmailLog([{t:"err",m:`Erro ao processar e-mail: ${err.message}`}]);
+    }
+    setEmailProcessing(false);
+  };
+
+  const handleEmailDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const files = Array.from(e.dataTransfer?.files || []);
+    const emailFile = files.find(f => {
+      const ext = f.name.split(".").pop().toLowerCase();
+      return ext === "eml" || ext === "msg";
+    });
+    if (emailFile) {
+      processEmailFile(emailFile);
+    } else if (files.length > 0) {
+      // Se não for .eml/.msg, pode ser um PDF ou imagem direto
+      const file = files[0];
+      const ext = file.name.split(".").pop().toLowerCase();
+      if (ext === "pdf") {
+        processEmailFile({...file, name: file.name, arrayBuffer: () => file.arrayBuffer()});
+      } else {
+        setEmailLog([{t:"err",m:`Arraste um arquivo .eml, .msg ou .pdf. Formato .${ext} não suportado.`}]);
+      }
+    }
+  };
+
   // ══════════════════════════════════════════════════════════════════════════
   // ── AVISO DE SINISTRO SECTION ─────────────────────────────────────────────
   // ══════════════════════════════════════════════════════════════════════════
@@ -773,8 +910,32 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
         {apolices.length>0&&<div style={{marginTop:8,background:"rgba(44,221,124,0.15)",border:"1px solid rgba(44,221,124,0.4)",borderRadius:8,padding:"7px 12px",fontSize:12,color:C.green,fontWeight:600}}>✓ {apolices.length} apólices na base · {instrucoes.length} instruções cadastradas</div>}
       </div>
 
+      {/* Zona de Drag & Drop para E-mails */}
+      <div
+        onDragOver={e=>{e.preventDefault();e.stopPropagation();}}
+        onDragEnter={e=>{e.preventDefault();e.stopPropagation();}}
+        onDrop={handleEmailDrop}
+        style={{border:`2px dashed ${C.blue}`,borderRadius:8,padding:"14px",background:"rgba(62,117,255,0.03)",textAlign:"center",cursor:"pointer",position:"relative"}}
+      >
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginBottom:8}}>
+          <Mail size={16} color={C.blue}/>
+          <span style={{fontSize:13,fontWeight:600,color:C.navy}}>Arraste um e-mail (.eml ou .msg) aqui</span>
+        </div>
+        <div style={{fontSize:11.5,color:C.grey}}>Os anexos (PDF e imagens) serão processados automaticamente com OCR</div>
+      </div>
+
+      {/* Log de processamento do e-mail */}
+      {emailLog.length>0&&<div style={{background:C.bg,borderRadius:8,padding:"10px 12px",maxHeight:120,overflowY:"auto"}}>
+        {emailLog.map((l,i)=><div key={i} style={{fontSize:11.5,color:l.t==="err"?"#B91C1C":C.green,marginBottom:3}}>{l.m}</div>)}
+      </div>}
+
+      {emailProcessing&&<div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0"}}>
+        <div style={{width:16,height:16,border:`3px solid ${C.light}`,borderTopColor:C.blue,borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>
+        <span style={{fontSize:12,color:C.navy,fontWeight:600}}>Processando e-mail e anexos...</span>
+      </div>}
+
       <textarea value={avisoTxt} onChange={e=>setAvisoTxt(e.target.value)}
-        placeholder={"Cole aqui o e-mail de aviso de sinistro ou descreva manualmente:\n\nExemplo:\nDe: cliente@empresa.com.br\nAssunto: Aviso de Sinistro - Incêndio no Galpão\n\nPrezados,\nInformamos que ocorreu um incêndio em nosso galpão na data de 25/05/2026...\n\nOu manualmente:\nSegurado: Empresa XYZ Ltda\nData do Sinistro: 25/05/2026\nTipo: Incêndio\nDescrição: ..."}
+        placeholder={"Cole aqui o e-mail de aviso de sinistro, descreva manualmente, ou arraste um arquivo .eml/.msg acima.\n\nExemplo:\nDe: cliente@empresa.com.br\nAssunto: Aviso de Sinistro - Incêndio no Galpão\n\nPrezados,\nInformamos que ocorreu um incêndio em nosso galpão na data de 25/05/2026..."}
         style={{width:"100%",padding:"12px 14px",borderRadius:8,border:`1.5px solid ${C.border}`,fontFamily:font,fontSize:13,color:C.body,outline:"none",resize:"vertical",minHeight:isMobile?140:180,boxSizing:"border-box"}}/>
 
       <button onClick={runAvisoIA} disabled={avisoLd||!avisoTxt.trim()} style={{...btn(C.blue),justifyContent:"center",padding:12,opacity:avisoLd||!avisoTxt.trim()?0.55:1}}>
