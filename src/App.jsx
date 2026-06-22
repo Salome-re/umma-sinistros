@@ -3,7 +3,8 @@ import * as XLSX from "xlsx";
 import PostalMime from "postal-mime";
 import { parse as parseMsgFile } from "@molotochok/msg-viewer";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts";
-import { AlertTriangle, CheckCircle, Upload, BarChart2, Home, BookOpen, Shield, X, Eye, Search, Zap, Download, AlertCircle, Database, RefreshCw, CheckSquare, FileSpreadsheet, Menu, ChevronDown, ChevronUp, FileText, Mail, Plus, Trash2, Copy, FileCheck, Clipboard, FileOutput, Users } from "lucide-react";
+import { AlertTriangle, CheckCircle, Upload, BarChart2, Home, BookOpen, Shield, X, Eye, Search, Zap, Download, AlertCircle, Database, RefreshCw, CheckSquare, FileSpreadsheet, Menu, ChevronDown, ChevronUp, FileText, Mail, Plus, Trash2, Copy, FileCheck, Clipboard, FileOutput, Users, UserPlus, LogOut, Lock } from "lucide-react";
+import { checkEmail, listUsers, addUser, removeUser, updateUserRole } from "./supabase.js";
 import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, HeadingLevel, WidthType, AlignmentType, BorderStyle } from "docx";
 import PptxGenJS from "pptxgenjs";
 import { saveAs } from "file-saver";
@@ -315,6 +316,13 @@ const btn = (col,sm) => ({display:"flex",alignItems:"center",gap:6,padding:sm?"7
 export default function App() {
   const { isMobile } = useResponsive();
 
+  // ── Auth state ──────────────────────────────────────────────────────────────
+  const [authUser, setAuthUser] = useState(null); // {id, email, nome, role}
+  const [authChecking, setAuthChecking] = useState(true);
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
+
   // ── Core state ─────────────────────────────────────────────────────────────
   const [sec,    setSec]   = useState("aviso");
   const [casos,  setCasos] = useState([]);
@@ -371,6 +379,41 @@ export default function App() {
   const fRefInst = useRef();
 
   // ── Load from localStorage ─────────────────────────────────────────────────
+  // ── Auth check on mount ─────────────────────────────────────────────────────
+  useEffect(() => {
+    const saved = localStorage.getItem("umma-auth");
+    if (saved) {
+      try {
+        const u = JSON.parse(saved);
+        if (u && u.email) { setAuthUser(u); }
+      } catch(e) {}
+    }
+    setAuthChecking(false);
+  }, []);
+
+  const handleLogin = async (e) => {
+    if (e) e.preventDefault();
+    setLoginError("");
+    setLoginLoading(true);
+    try {
+      const user = await checkEmail(loginEmail);
+      if (user) {
+        setAuthUser(user);
+        localStorage.setItem("umma-auth", JSON.stringify(user));
+      } else {
+        setLoginError("E-mail não autorizado. Solicite um convite ao administrador.");
+      }
+    } catch(err) {
+      setLoginError("Erro ao verificar acesso. Tente novamente.");
+    }
+    setLoginLoading(false);
+  };
+
+  const handleLogout = () => {
+    setAuthUser(null);
+    localStorage.removeItem("umma-auth");
+  };
+
   useEffect(() => {
     try {
       const raw = localStorage.getItem("umma-casos");
@@ -617,10 +660,11 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
     {id:"importar",  lb:"Importar",   ic:Upload},
     {id:"segurados", lb:"Segurados",  ic:Users},
     {id:"relatorios",lb:"Relatórios", ic:FileOutput},
+    ...(authUser&&authUser.role==="admin"?[{id:"admin",lb:"Admin",ic:Shield}]:[]),
   ];
   const titles={aviso:"Aviso de Sinistro",dashboard:"Dashboard",casos:"Gestão de Casos",
     apolices:"Apólices Vigentes",instrucoes:"Instruções de Regulação",
-    ai:"Análise por IA",normas:"Normas SUSEP",importar:"Importar Dados",segurados:"Segurados",relatorios:"Relatórios"};
+    ai:"Análise por IA",normas:"Normas SUSEP",importar:"Importar Dados",segurados:"Segurados",relatorios:"Relatórios",admin:"Administração"};
 
   // ── SIDEBAR ───────────────────────────────────────────────────────────────
   const Sidebar = () => (
@@ -668,6 +712,10 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
         {!isMobile&&<span style={{fontSize:11,color:compliance>=85?C.green:C.orange}}> Compliance</span>}
       </div>
       {!isMobile&&<span style={{fontSize:11,color:C.grey,flexShrink:0}}>{total} casos</span>}
+      {authUser&&<div style={{display:"flex",alignItems:"center",gap:8,marginLeft:8,flexShrink:0}}>
+        <span style={{fontSize:11,color:C.grey}}>{authUser.nome}</span>
+        <button onClick={handleLogout} title="Sair" style={{background:"#F1F5F9",border:"1px solid #E2E8F0",borderRadius:6,padding:"4px 8px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:11,color:C.grey,fontFamily:font}}><LogOut size={12}/>Sair</button>
+      </div>}
     </div>
   );
 
@@ -1983,8 +2031,219 @@ Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),
       case "importar":   return <ImportSection/>;
       case "segurados":  return <SeguradosSection/>;
       case "relatorios": return <RelatoriosSection/>;
+      case "admin":      return <AdminSection/>;
       default:           return <AvisoSection/>;
     }
+  };
+
+  // ── LOGIN SCREEN ───────────────────────────────────────────────────────────
+  if (authChecking) return (
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:C.bg,fontFamily:font}}>
+      <div style={{width:36,height:36,border:`3px solid ${C.light}`,borderTopColor:C.blue,borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
+
+  if (!authUser) return (
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:`linear-gradient(135deg, ${C.navy} 0%, #1A3A8F 100%)`,fontFamily:font}}>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700;800&display=swap');`}</style>
+      <div style={{background:C.white,borderRadius:16,padding:isMobile?"32px 24px":"48px 40px",width:isMobile?"90%":420,boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+        <div style={{textAlign:"center",marginBottom:28}}>
+          <img src="/assets/umma_logo_dark.png" alt="UMMA" style={{height:56,marginBottom:16}}/>
+          <h2 style={{margin:0,fontSize:20,color:C.navy,fontWeight:700}}>Acesso à Plataforma</h2>
+          <p style={{margin:"8px 0 0",fontSize:13,color:C.grey}}>Insira seu e-mail autorizado para continuar</p>
+        </div>
+        <form onSubmit={handleLogin}>
+          <div style={{marginBottom:16}}>
+            <label style={{fontSize:12,fontWeight:600,color:C.navy,marginBottom:6,display:"block"}}>E-mail</label>
+            <input type="email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} placeholder="seu@email.com.br" required
+              style={{width:"100%",padding:"12px 14px",border:`1px solid ${C.border}`,borderRadius:8,fontSize:14,fontFamily:font,background:C.bg}}/>
+          </div>
+          {loginError&&<div style={{background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,padding:"10px 12px",marginBottom:16,fontSize:12,color:"#991B1B",display:"flex",alignItems:"center",gap:8}}><AlertCircle size={14}/>{loginError}</div>}
+          <button type="submit" disabled={loginLoading||!loginEmail}
+            style={{width:"100%",padding:"13px",background:C.blue,color:C.white,border:"none",borderRadius:8,fontSize:14,fontWeight:700,cursor:"pointer",opacity:loginLoading?0.7:1,fontFamily:font,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+            {loginLoading?<><div style={{width:16,height:16,border:"2px solid rgba(255,255,255,0.3)",borderTopColor:C.white,borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/> Verificando...</>:<><Lock size={15}/> Entrar</>}
+          </button>
+        </form>
+        <p style={{textAlign:"center",fontSize:11,color:C.grey,marginTop:20}}>Acesso restrito a usuários convidados.<br/>Solicite acesso ao administrador.</p>
+      </div>
+    </div>
+  );
+
+  // ── ADMIN SECTION COMPONENT ─────────────────────────────────────────────────
+  const AdminSection = () => {
+    const [users, setUsers] = useState([]);
+    const [loadingUsers, setLoadingUsers] = useState(true);
+    const [newEmail, setNewEmail] = useState("");
+    const [newNome, setNewNome] = useState("");
+    const [newRole, setNewRole] = useState("visualizador");
+    const [inviteLoading, setInviteLoading] = useState(false);
+    const [inviteMsg, setInviteMsg] = useState("");
+    const [inviteErr, setInviteErr] = useState("");
+
+    useEffect(() => {
+      loadUsers();
+    }, []);
+
+    const loadUsers = async () => {
+      setLoadingUsers(true);
+      const data = await listUsers();
+      setUsers(data);
+      setLoadingUsers(false);
+    };
+
+    const handleInvite = async (e) => {
+      e.preventDefault();
+      setInviteLoading(true);
+      setInviteMsg("");
+      setInviteErr("");
+      try {
+        await addUser(newEmail, newNome, newRole, authUser.nome);
+        // Enviar e-mail de convite
+        try {
+          const r = await fetch("/api/send-invite", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: newEmail, nome: newNome, role: newRole, convidadoPor: authUser.nome })
+          });
+          if (r.ok) {
+            setInviteMsg(`Convite enviado para ${newEmail}`);
+          } else {
+            setInviteMsg(`Usuário adicionado, mas o e-mail não pôde ser enviado. Compartilhe o link manualmente.`);
+          }
+        } catch(emailErr) {
+          setInviteMsg(`Usuário adicionado. Envio de e-mail indisponível — compartilhe o link: ${window.location.origin}`);
+        }
+        setNewEmail("");
+        setNewNome("");
+        setNewRole("visualizador");
+        loadUsers();
+      } catch(err) {
+        setInviteErr(err.message.includes("duplicate") ? "Este e-mail já está cadastrado." : err.message);
+      }
+      setInviteLoading(false);
+    };
+
+    const handleRemove = async (id, email) => {
+      if (email === authUser.email) return alert("Você não pode remover a si mesmo.");
+      if (!window.confirm(`Remover acesso de ${email}?`)) return;
+      try {
+        await removeUser(id);
+        loadUsers();
+      } catch(err) { alert("Erro ao remover: " + err.message); }
+    };
+
+    const handleRoleChange = async (id, email, currentRole) => {
+      if (email === authUser.email) return alert("Você não pode alterar seu próprio papel.");
+      const newR = currentRole === "admin" ? "visualizador" : "admin";
+      if (!window.confirm(`Alterar ${email} para ${newR}?`)) return;
+      try {
+        await updateUserRole(id, newR);
+        loadUsers();
+      } catch(err) { alert("Erro: " + err.message); }
+    };
+
+    const card = {background:C.white,borderRadius:12,border:`1px solid ${C.border}`,padding:isMobile?"16px":"22px 26px",marginBottom:16};
+
+    return (
+      <div style={{maxWidth:900,margin:"0 auto"}}>
+        <div style={{...card,background:`linear-gradient(135deg,${C.navy},#1A3A8F)`,border:"none"}}>
+          <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:8}}>
+            <Shield size={22} color={C.white}/>
+            <div>
+              <div style={{fontWeight:700,fontSize:16,color:C.white}}>Administração de Usuários</div>
+              <div style={{fontSize:12,color:"#94A3B8"}}>Gerencie convidados e permissões de acesso</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Formulário de convite */}
+        <div style={card}>
+          <div style={{fontWeight:700,fontSize:14,color:C.navy,marginBottom:14,display:"flex",alignItems:"center",gap:8}}><UserPlus size={16}/>Convidar Novo Usuário</div>
+          <form onSubmit={handleInvite} style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end"}}>
+            <div style={{flex:"1 1 180px"}}>
+              <label style={{fontSize:11,fontWeight:600,color:C.grey,display:"block",marginBottom:4}}>Nome *</label>
+              <input value={newNome} onChange={e=>setNewNome(e.target.value)} placeholder="Primeiro nome" required
+                style={{width:"100%",padding:"9px 12px",border:`1px solid ${C.border}`,borderRadius:7,fontSize:13,fontFamily:font}}/>
+            </div>
+            <div style={{flex:"2 1 240px"}}>
+              <label style={{fontSize:11,fontWeight:600,color:C.grey,display:"block",marginBottom:4}}>E-mail *</label>
+              <input type="email" value={newEmail} onChange={e=>setNewEmail(e.target.value)} placeholder="email@empresa.com.br" required
+                style={{width:"100%",padding:"9px 12px",border:`1px solid ${C.border}`,borderRadius:7,fontSize:13,fontFamily:font}}/>
+            </div>
+            <div style={{flex:"0 1 150px"}}>
+              <label style={{fontSize:11,fontWeight:600,color:C.grey,display:"block",marginBottom:4}}>Permissão</label>
+              <select value={newRole} onChange={e=>setNewRole(e.target.value)}
+                style={{width:"100%",padding:"9px 12px",border:`1px solid ${C.border}`,borderRadius:7,fontSize:13,fontFamily:font,background:C.white}}>
+                <option value="visualizador">Visualizador</option>
+                <option value="admin">Administrador</option>
+              </select>
+            </div>
+            <button type="submit" disabled={inviteLoading||!newEmail||!newNome}
+              style={{padding:"9px 18px",background:C.blue,color:C.white,border:"none",borderRadius:7,fontSize:13,fontWeight:600,cursor:"pointer",opacity:inviteLoading?0.7:1,fontFamily:font,display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}>
+              {inviteLoading?"Enviando...":<><Mail size={13}/>Convidar</>}
+            </button>
+          </form>
+          {inviteMsg&&<div style={{marginTop:12,padding:"10px 12px",background:"#F0FDF4",border:"1px solid #BBF7D0",borderRadius:8,fontSize:12,color:"#166534"}}>{inviteMsg}</div>}
+          {inviteErr&&<div style={{marginTop:12,padding:"10px 12px",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,fontSize:12,color:"#991B1B"}}>{inviteErr}</div>}
+        </div>
+
+        {/* Lista de usuários */}
+        <div style={card}>
+          <div style={{fontWeight:700,fontSize:14,color:C.navy,marginBottom:14,display:"flex",alignItems:"center",gap:8}}><Users size={16}/>Usuários Autorizados ({users.length})</div>
+          {loadingUsers ? (
+            <div style={{textAlign:"center",padding:20}}><div style={{width:24,height:24,border:`2px solid ${C.light}`,borderTopColor:C.blue,borderRadius:"50%",animation:"spin 0.8s linear infinite",margin:"0 auto"}}/></div>
+          ) : (
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+                <thead>
+                  <tr style={{borderBottom:`2px solid ${C.light}`}}>
+                    <th style={{textAlign:"left",padding:"8px 10px",color:C.navy,fontWeight:700,fontSize:11,textTransform:"uppercase"}}>Nome</th>
+                    <th style={{textAlign:"left",padding:"8px 10px",color:C.navy,fontWeight:700,fontSize:11,textTransform:"uppercase"}}>E-mail</th>
+                    <th style={{textAlign:"left",padding:"8px 10px",color:C.navy,fontWeight:700,fontSize:11,textTransform:"uppercase"}}>Permissão</th>
+                    <th style={{textAlign:"left",padding:"8px 10px",color:C.navy,fontWeight:700,fontSize:11,textTransform:"uppercase"}}>Últ. Acesso</th>
+                    <th style={{textAlign:"right",padding:"8px 10px",color:C.navy,fontWeight:700,fontSize:11,textTransform:"uppercase"}}>Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.map(u=>(
+                    <tr key={u.id} style={{borderBottom:`1px solid ${C.light}`}}>
+                      <td style={{padding:"10px"}}><span style={{fontWeight:600}}>{u.nome}</span></td>
+                      <td style={{padding:"10px",color:C.grey}}>{u.email}</td>
+                      <td style={{padding:"10px"}}>
+                        <span style={{padding:"3px 10px",borderRadius:12,fontSize:11,fontWeight:600,
+                          background:u.role==="admin"?"#EDE9FE":"#E0F2FE",
+                          color:u.role==="admin"?"#6D28D9":"#0369A1"}}>
+                          {u.role==="admin"?"Admin":"Visualizador"}
+                        </span>
+                      </td>
+                      <td style={{padding:"10px",color:C.grey,fontSize:12}}>{u.ultimo_acesso?new Date(u.ultimo_acesso).toLocaleDateString("pt-BR"):"Nunca"}</td>
+                      <td style={{padding:"10px",textAlign:"right"}}>
+                        <div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
+                          <button onClick={()=>handleRoleChange(u.id,u.email,u.role)} title="Alterar permissão"
+                            style={{padding:"5px 8px",background:"#F1F5F9",border:"1px solid #E2E8F0",borderRadius:6,cursor:"pointer",fontSize:11,fontFamily:font}}>
+                            {u.role==="admin"?"\u2193 Visualizador":"\u2191 Admin"}
+                          </button>
+                          <button onClick={()=>handleRemove(u.id,u.email)} title="Remover acesso"
+                            style={{padding:"5px 8px",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:6,cursor:"pointer",color:"#991B1B",fontSize:11,fontFamily:font}}>
+                            <Trash2 size={12}/>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Info do usuário logado */}
+        <div style={{...card,background:"#F8FAFC"}}>
+          <div style={{fontSize:12,color:C.grey}}>Logado como: <strong>{authUser.nome}</strong> ({authUser.email}) — {authUser.role==="admin"?"Administrador":"Visualizador"}</div>
+        </div>
+      </div>
+    );
   };
 
   return (
