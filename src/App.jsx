@@ -3,7 +3,7 @@ import * as XLSX from "xlsx";
 import PostalMime from "postal-mime";
 import { parse as parseMsgFile } from "@molotochok/msg-viewer";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts";
-import { AlertTriangle, CheckCircle, Upload, BarChart2, Home, BookOpen, Shield, X, Eye, Search, Zap, Download, AlertCircle, Database, RefreshCw, CheckSquare, FileSpreadsheet, Menu, ChevronDown, ChevronUp, FileText, Mail, Plus, Trash2, Copy, FileCheck, Clipboard, FileOutput } from "lucide-react";
+import { AlertTriangle, CheckCircle, Upload, BarChart2, Home, BookOpen, Shield, X, Eye, Search, Zap, Download, AlertCircle, Database, RefreshCw, CheckSquare, FileSpreadsheet, Menu, ChevronDown, ChevronUp, FileText, Mail, Plus, Trash2, Copy, FileCheck, Clipboard, FileOutput, Users } from "lucide-react";
 import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, HeadingLevel, WidthType, AlignmentType, BorderStyle } from "docx";
 import PptxGenJS from "pptxgenjs";
 import { saveAs } from "file-saver";
@@ -506,19 +506,25 @@ export default function App() {
     const sys = `Você é um especialista em regulação de sinistros da Umma Corretora de Seguros.
 Ao receber um aviso de sinistro (por e-mail ou manual), você deve:
 1. Identificar o cliente/segurado na base de apólices
-2. Identificar a apólice vigente correspondente — REGRA CRÍTICA: se o texto do aviso mencionar EXPLICITAMENTE um número de apólice (ex: "Apólice 5400057713", "apólice nº 9800020172017", "apólice 2017" etc.), use ESSE número como apolice_identificada, mesmo que a base de apólices contenha outro número. O número informado no aviso tem PRIORIDADE ABSOLUTA sobre qualquer inferência da base.
+2. Identificar a apólice vigente correspondente — REGRAS CRÍTICAS:
+   a) Se o texto do aviso mencionar EXPLICITAMENTE um número de apólice (ex: "Apólice 5400057713", "apólice nº 9800020172017", "policy 08737.2022.01.0310.000878" etc.), use ESSE número como apolice_identificada. O número informado no aviso tem PRIORIDADE ABSOLUTA.
+   b) DIVERGÊNCIA DE APÓLICE: Se o número mencionado no texto do aviso for DIFERENTE do número da apólice anexada na base, você DEVE incluir um alerta explícito no campo "alertas" informando: "ATENÇÃO: O número de apólice mencionado no aviso ([número do texto]) DIFERE da apólice cadastrada na base ([número da base]). Verificar qual é a apólice correta antes de prosseguir."
+   c) Se a apólice anexada na base NÃO corresponder ao número no aviso, analise AMBAS e informe qual parece ser a correta com base no segurado, vigência e cobertura.
 3. Determinar a complexidade do sinistro (Simples/Complexo)
 4. Informar os prazos de regulação aplicáveis (Circ. SUSEP 621/2021, Lei 15.040/2024, Res. CNSP 407/2021)
 5. Listar os documentos necessários para a regulação
 6. Sugerir um e-mail profissional ao cliente com o passo a passo para início do processo de regulação junto à seguradora
 
+REGRA DE IDIOMA: As apólices cadastradas na base podem estar em PORTUGUÊS ou INGLÊS (ex: apólices de seguradoras internacionais como AIG, Chubb, Zurich, Lloyd's, Guardian General). Você DEVE ler e interpretar apólices em qualquer idioma. Ao analisar apólices em inglês, traduza os campos relevantes (coberturas, exclusões, limites, vigência) para português na sua resposta. Identifique corretamente: Policy Number, Insured, Coverage, Period of Insurance, Sum Insured, Deductible, Premium, Exclusions.
+
 Retorne SOMENTE JSON válido com esta estrutura exata:
 {
   "cliente_identificado": "Nome do segurado ou 'Não identificado'",
   "apolice_identificada": "Número da apólice ou 'Não localizada'",
+  "apolice_idioma": "Português" ou "Inglês" ou "Bilíngue",
   "seguradora": "Nome da seguradora",
   "produto": "Produto/ramo do seguro",
-  "cobertura_aplicavel": "Descrição da cobertura que se aplica",
+  "cobertura_aplicavel": "Descrição da cobertura que se aplica (traduzida para PT se a apólice for em inglês)",
   "complexidade": "Simples" ou "Complexo",
   "norma_aplicavel": "Nome da norma",
   "prazo_regulacao": número em dias,
@@ -526,7 +532,7 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
   "sunset_clause": true ou false,
   "documentos_necessarios": ["lista", "de", "documentos"],
   "acoes_imediatas": ["lista", "de", "ações"],
-  "alertas": ["alertas importantes"],
+  "alertas": ["alertas importantes — incluir OBRIGATORIAMENTE alerta se houver divergência entre número de apólice no texto e na base"],
   "email_sugerido": "Texto completo do e-mail ao cliente com saudação, corpo detalhado com passo a passo e assinatura profissional",
   "resumo_operacional": "Resumo para a equipe interna"
 }${apolicesCtx}${instrucoesCtx}`;
@@ -569,11 +575,12 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
     {id:"ai",        lb:"IA",         ic:Zap},
     {id:"normas",    lb:"Normas",     ic:BookOpen},
     {id:"importar",  lb:"Importar",   ic:Upload},
+    {id:"segurados", lb:"Segurados",  ic:Users},
     {id:"relatorios",lb:"Relatórios", ic:FileOutput},
   ];
   const titles={aviso:"Aviso de Sinistro",dashboard:"Dashboard",casos:"Gestão de Casos",
     apolices:"Apólices Vigentes",instrucoes:"Instruções de Regulação",
-    ai:"Análise por IA",normas:"Normas SUSEP",importar:"Importar Dados",relatorios:"Relatórios"};
+    ai:"Análise por IA",normas:"Normas SUSEP",importar:"Importar Dados",segurados:"Segurados",relatorios:"Relatórios"};
 
   // ── SIDEBAR ───────────────────────────────────────────────────────────────
   const Sidebar = () => (
@@ -966,7 +973,7 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
           <div style={{...card,borderLeft:`4px solid ${C.blue}`}}>
             <div style={{fontSize:11,fontWeight:700,color:C.grey,letterSpacing:0.5,textTransform:"uppercase",marginBottom:8}}>Identificação</div>
             <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr 1fr",gap:8}}>
-              {[["Cliente",avisoRes.cliente_identificado],["Apólice",avisoRes.apolice_identificada],["Seguradora",avisoRes.seguradora],["Produto",avisoRes.produto],["Cobertura",avisoRes.cobertura_aplicavel],["Complexidade",avisoRes.complexidade]].map(([k,v],i)=>(
+              {[["Cliente",avisoRes.cliente_identificado],["Apólice",avisoRes.apolice_identificada],["Idioma Apólice",avisoRes.apolice_idioma],["Seguradora",avisoRes.seguradora],["Produto",avisoRes.produto],["Cobertura",avisoRes.cobertura_aplicavel],["Complexidade",avisoRes.complexidade]].map(([k,v],i)=>(
                 <div key={i} style={{background:C.bg,borderRadius:8,padding:"8px 10px"}}>
                   <div style={{fontSize:9.5,color:C.grey,fontWeight:600,textTransform:"uppercase",letterSpacing:0.3}}>{k}</div>
                   <div style={{fontSize:12.5,fontWeight:700,color:C.body,marginTop:2}}>{v||"—"}</div>
@@ -1635,6 +1642,148 @@ Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),
     pptx.writeFile({ fileName: nomeArq });
   };
 
+  // ── SEGURADOS SECTION ─────────────────────────────────────────────────────
+  const SeguradosSection = () => {
+    const [selSegurado, setSelSegurado] = useState(null);
+    const [srchSeg, setSrchSeg] = useState("");
+
+    // Lista única de segurados com contagem
+    const seguradosList = React.useMemo(() => {
+      const map = {};
+      dados.forEach(c => {
+        const seg = c.segurado || "Não informado";
+        if (!map[seg]) map[seg] = { nome: seg, total: 0, statuses: {}, ramos: {} };
+        map[seg].total++;
+        map[seg].statuses[c.status] = (map[seg].statuses[c.status] || 0) + 1;
+        const ramo = c.tipo || "Não informado";
+        map[seg].ramos[ramo] = (map[seg].ramos[ramo] || 0) + 1;
+      });
+      return Object.values(map).sort((a, b) => b.total - a.total);
+    }, [dados]);
+
+    const filtSegurados = seguradosList.filter(s => !srchSeg || s.nome.toLowerCase().includes(srchSeg.toLowerCase()));
+
+    // Casos do segurado selecionado
+    const casosSeg = selSegurado ? dados.filter(c => c.segurado === selSegurado.nome) : [];
+
+    // Dados para gráfico de status do segurado selecionado
+    const statusChartData = selSegurado ? Object.entries(selSegurado.statuses).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value) : [];
+    const ramoChartData = selSegurado ? Object.entries(selSegurado.ramos).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value) : [];
+
+    const COLORS_CHART = [C.blue, C.green, C.orange, C.purple, C.cyan, C.amber, C.teal, C.red, C.navy, "#94A3B8"];
+
+    if (selSegurado) {
+      return (
+        <div style={{display:"flex",flexDirection:"column",gap:16}}>
+          {/* Header com botão voltar */}
+          <div style={{...card,padding:16,display:"flex",alignItems:"center",gap:12}}>
+            <button onClick={() => setSelSegurado(null)} style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:8,padding:"6px 12px",cursor:"pointer",fontFamily:font,fontSize:12,fontWeight:600,color:C.navy,display:"flex",alignItems:"center",gap:4}}>← Voltar</button>
+            <div>
+              <h3 style={{margin:0,fontSize:16,fontWeight:700,color:C.navy}}>{selSegurado.nome}</h3>
+              <span style={{fontSize:12,color:C.grey}}>{selSegurado.total} sinistro(s) registrado(s)</span>
+            </div>
+          </div>
+
+          {/* Gráficos lado a lado */}
+          <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:16}}>
+            {/* Gráfico por Situação */}
+            <div style={{...card,padding:16}}>
+              <h4 style={{margin:"0 0 12px",fontSize:13,fontWeight:700,color:C.navy}}>Distribuição por Situação</h4>
+              <ResponsiveContainer width="100%" height={220}>
+                <PieChart>
+                  <Pie data={statusChartData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label={({name,value})=>`${name}: ${value}`} labelLine={true} fontSize={10}>
+                    {statusChartData.map((entry, idx) => <Cell key={idx} fill={COLORS_CHART[idx % COLORS_CHART.length]} />)}
+                  </Pie>
+                  <Tooltip/>
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Gráfico por Ramo/Produto */}
+            <div style={{...card,padding:16}}>
+              <h4 style={{margin:"0 0 12px",fontSize:13,fontWeight:700,color:C.navy}}>Distribuição por Produto/Ramo</h4>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={ramoChartData.slice(0,8)} margin={{top:5,right:5,left:5,bottom:40}}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                  <XAxis dataKey="name" tick={{fontSize:9}} angle={-35} textAnchor="end" height={60}/>
+                  <YAxis tick={{fontSize:10}}/>
+                  <Tooltip/>
+                  <Bar dataKey="value" fill={C.blue} radius={[4,4,0,0]}/>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Tabela de sinistros do segurado */}
+          <div style={{...card,padding:16}}>
+            <h4 style={{margin:"0 0 12px",fontSize:13,fontWeight:700,color:C.navy}}>Sinistros — {selSegurado.nome}</h4>
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:11.5}}>
+                <thead>
+                  <tr style={{background:C.navy}}>
+                    {["Nº Aviso","Produto","Seguradora","Status","Risco","Apurado"].map(h=>(
+                      <th key={h} style={{padding:"8px 10px",color:C.white,fontWeight:600,textAlign:"left",fontSize:10,whiteSpace:"nowrap"}}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {casosSeg.map((c,i)=>(
+                    <tr key={i} style={{background:i%2===0?C.white:"#F8FAFC",borderBottom:`1px solid ${C.border}`}}>
+                      <td style={{padding:"7px 10px",fontWeight:600,color:C.navy}}>{c.id||"—"}</td>
+                      <td style={{padding:"7px 10px"}}>{c.tipo||"—"}</td>
+                      <td style={{padding:"7px 10px"}}>{c.seguradora||"—"}</td>
+                      <td style={{padding:"7px 10px"}}><span style={{background:C.light,color:C.navy,padding:"2px 8px",borderRadius:10,fontSize:10,fontWeight:600}}>{c.status||"—"}</span></td>
+                      <td style={{padding:"7px 10px"}}><span style={{color:c.risco&&c.risco.includes("Vencido")?"#EF4444":c.risco==="Alto"?"#F59E0B":C.green,fontWeight:600,fontSize:10.5}}>{c.risco||"—"}</span></td>
+                      <td style={{padding:"7px 10px",fontWeight:600}}>{fCur(c.apurado)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div style={{display:"flex",flexDirection:"column",gap:16}}>
+        <div style={{...card,padding:16}}>
+          <h3 style={{margin:"0 0 12px",fontSize:15,fontWeight:700,color:C.navy}}>Segurados</h3>
+          <p style={{margin:"0 0 16px",fontSize:12.5,color:C.grey}}>Clique em um segurado para visualizar o detalhamento dos sinistros por situação, produto e gráficos.</p>
+          {/* Busca */}
+          <div style={{position:"relative",marginBottom:16}}>
+            <Search size={14} style={{position:"absolute",left:10,top:10,color:C.grey}}/>
+            <input value={srchSeg} onChange={e=>setSrchSeg(e.target.value)} placeholder="Buscar segurado..." style={{width:"100%",padding:"9px 12px 9px 30px",borderRadius:8,border:`1.5px solid ${C.border}`,fontFamily:font,fontSize:13,color:C.body,outline:"none",boxSizing:"border-box"}}/>
+          </div>
+          {/* Resumo */}
+          <div style={{display:"flex",gap:12,marginBottom:16,flexWrap:"wrap"}}>
+            <div style={{background:C.bg,borderRadius:8,padding:"8px 14px"}}><span style={{fontSize:10,color:C.grey,fontWeight:600}}>TOTAL SEGURADOS</span><div style={{fontSize:18,fontWeight:800,color:C.navy}}>{seguradosList.length}</div></div>
+            <div style={{background:C.bg,borderRadius:8,padding:"8px 14px"}}><span style={{fontSize:10,color:C.grey,fontWeight:600}}>TOTAL SINISTROS</span><div style={{fontSize:18,fontWeight:800,color:C.blue}}>{dados.length}</div></div>
+          </div>
+          {/* Lista de segurados */}
+          <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr 1fr",gap:10}}>
+            {filtSegurados.map((s,i) => (
+              <div key={i} onClick={() => setSelSegurado(s)} style={{background:C.white,border:`1.5px solid ${C.border}`,borderRadius:10,padding:"12px 14px",cursor:"pointer",transition:"all 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+                <div style={{fontSize:12.5,fontWeight:700,color:C.navy,marginBottom:4,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.nome}</div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span style={{fontSize:11,color:C.grey}}>{s.total} sinistro(s)</span>
+                  <span style={{fontSize:10,background:C.light,color:C.blue,padding:"2px 8px",borderRadius:10,fontWeight:600}}>{Object.keys(s.statuses).length} status</span>
+                </div>
+                <div style={{marginTop:6,display:"flex",flexWrap:"wrap",gap:3}}>
+                  {Object.entries(s.statuses).slice(0,3).map(([st,qt],j)=>(
+                    <span key={j} style={{fontSize:9,background:"#F1F5F9",color:C.grey,padding:"1px 5px",borderRadius:4}}>{st}: {qt}</span>
+                  ))}
+                  {Object.keys(s.statuses).length>3&&<span style={{fontSize:9,color:C.grey}}>+{Object.keys(s.statuses).length-3}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+          {filtSegurados.length===0&&<div style={{textAlign:"center",padding:20,color:C.grey,fontSize:13}}>Nenhum segurado encontrado. Importe dados primeiro.</div>}
+        </div>
+      </div>
+    );
+  };
+
   const RelatoriosSection = () => (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
       <div style={{...card,padding:20}}>
@@ -1791,6 +1940,7 @@ Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),
       case "ai":         return <AISection/>;
       case "normas":     return <NormasSection/>;
       case "importar":   return <ImportSection/>;
+      case "segurados":  return <SeguradosSection/>;
       case "relatorios": return <RelatoriosSection/>;
       default:           return <AvisoSection/>;
     }
