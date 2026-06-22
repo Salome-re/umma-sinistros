@@ -2184,7 +2184,7 @@ Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),
               {inviteLoading?"Enviando...":<><Mail size={13}/>Convidar</>}
             </button>
           </form>
-          {inviteMsg&&<div style={{marginTop:12,padding:"10px 12px",background:"#F0FDF4",border:"1px solid #BBF7D0",borderRadius:8,fontSize:12,color:"#166534"}}>{inviteMsg}</div>}
+          {inviteMsg&&<div style={{marginTop:12,padding:"10px 12px",background:"#F0FDF4",border:"1px solid #BBF7D0",borderRadius:8,fontSize:12,color:"#166534",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}><span>{inviteMsg}</span><button onClick={()=>{navigator.clipboard.writeText(window.location.origin);alert("Link copiado para a área de transferência!")}} style={{padding:"5px 12px",background:"#166534",color:C.white,border:"none",borderRadius:6,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:font,display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}><Copy size={11}/>Copiar Link</button></div>}
           {inviteErr&&<div style={{marginTop:12,padding:"10px 12px",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,fontSize:12,color:"#991B1B"}}>{inviteErr}</div>}
         </div>
 
@@ -2219,7 +2219,11 @@ Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),
                       </td>
                       <td style={{padding:"10px",color:C.grey,fontSize:12}}>{u.ultimo_acesso?new Date(u.ultimo_acesso).toLocaleDateString("pt-BR"):"Nunca"}</td>
                       <td style={{padding:"10px",textAlign:"right"}}>
-                        <div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
+                        <div style={{display:"flex",gap:6,justifyContent:"flex-end",flexWrap:"wrap"}}>
+                          <button onClick={()=>{const link=`${window.location.origin}`;navigator.clipboard.writeText(link);alert(`Link copiado!\n\n${link}\n\nEnvie ao convidado: ${u.nome} (${u.email})`)}} title="Copiar link de acesso"
+                            style={{padding:"5px 8px",background:"#EFF6FF",border:"1px solid #BFDBFE",borderRadius:6,cursor:"pointer",fontSize:11,fontFamily:font,color:"#1D4ED8",display:"flex",alignItems:"center",gap:3}}>
+                            <Copy size={11}/>Link
+                          </button>
                           <button onClick={()=>handleRoleChange(u.id,u.email,u.role)} title="Alterar permissão"
                             style={{padding:"5px 8px",background:"#F1F5F9",border:"1px solid #E2E8F0",borderRadius:6,cursor:"pointer",fontSize:11,fontFamily:font}}>
                             {u.role==="admin"?"\u2193 Visualizador":"\u2191 Admin"}
