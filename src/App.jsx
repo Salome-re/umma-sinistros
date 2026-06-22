@@ -276,6 +276,7 @@ export default function App() {
   const [srch,   setSrch]  = useState("");
   const [fSt,    setFSt]   = useState("Todos");
   const [fRk,    setFRk]   = useState("Todos");
+  const [fSeg,   setFSeg]  = useState("Todos");
   const [selC,   setSelC]  = useState(null);
   const [selN,   setSelN]  = useState(null);
   const [drag,   setDrag]  = useState(false);
@@ -381,10 +382,13 @@ export default function App() {
 
   const ALL_ST=["Todos","Em Regulação","Ag. Documentação","Em Litígio","Liquidado","Encerrado","Recusado","Expectativa","P. Seguradora"];
   const ALL_RK=["Todos","Vencido sob Lei 15.040","Alto","Médio","Baixo","Litígio","Pendente","Resolvido","Expectativa","Anterior à Norma","Em Regulação"];
+  // Lista de segurados únicos para o dropdown (ordenada alfabeticamente)
+  const ALL_SEG = ["Todos", ...Array.from(new Set(casos.map(c=>c.segurado).filter(Boolean))).sort()];
   const filtrados = casos.filter(c=>{
     const ms=fSt==="Todos"||c.status===fSt, mr=fRk==="Todos"||c.risco===fRk;
+    const mseg=fSeg==="Todos"||c.segurado===fSeg;
     const mb=!srch||[c.id,c.segurado,c.tipo,c.seguradora,c.regulador,c.ramo].some(f=>(f||"").toLowerCase().includes(srch.toLowerCase()));
-    return ms&&mr&&mb;
+    return ms&&mr&&mb&&mseg;
   });
 
   // ── File upload (sinistros) ────────────────────────────────────────────────
@@ -486,10 +490,10 @@ export default function App() {
       : "\n\nNota: Nenhuma apólice cadastrada na base. Analise com base nas informações do aviso.";
 
     const instrucoesCtx = instrucoes.length > 0
-      ? `\n\nINSTRUÇÕES E DOCUMENTOS DE REGULAÇÃO (${instrucoes.length} documento(s)):\n${instrucoes.slice(0,5).map(i=>
-          `--- Documento: ${i.nome} | Seguradora: ${i.seguradora||"não informada"} | Adicionado em: ${i.data}\nConteúdo:\n${(i.texto||"sem texto").slice(0,2000)}`
-        ).join("\n\n")}`
-      : "";
+      ? `\n\nPROCEDIMENTOS E INSTRUÇÕES OPERACIONAIS (${instrucoes.length} documento(s) carregado(s) — USE ESTES PROCEDIMENTOS ao orientar o cliente):\n${instrucoes.slice(0,8).map(i=>
+          `--- Documento: ${i.nome} | Seguradora: ${i.seguradora||"geral"} | Adicionado em: ${i.data}\nConteúdo:\n${(i.texto||"sem texto").slice(0,3000)}`
+        ).join("\n\n")}\n\nIMPORTANTE: Ao gerar o email_sugerido e as acoes_imediatas, incorpore os procedimentos acima de forma específica e detalhada para o cliente.`
+      : "\n\nNota: Nenhum procedimento operacional cadastrado. Oriente o cliente com base nas normas SUSEP vigentes.";
 
     const sys = `Você é um especialista em regulação de sinistros da Umma Corretora de Seguros.
 Ao receber um aviso de sinistro (por e-mail ou manual), você deve:
@@ -950,6 +954,9 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
                 {f.o.map(o=><option key={o}>{o}</option>)}
               </select>
             ))}
+            <select value={fSeg} onChange={e=>setFSeg(e.target.value)} style={{padding:"9px 10px",borderRadius:8,border:`1.5px solid ${C.border}`,fontFamily:font,fontSize:13,color:C.body,background:C.white,width:"100%"}}>
+              {ALL_SEG.map(s=><option key={s} value={s}>{s==="Todos"?"Todos os Clientes":s}</option>)}
+            </select>
           </div>)}
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}>
             <span style={{fontSize:11.5,color:C.grey}}>{filtrados.length}/{total} casos</span>
@@ -962,11 +969,14 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
             <Search size={12} style={{position:"absolute",left:9,top:"50%",transform:"translateY(-50%)",color:C.grey}}/>
             <input value={srch} onChange={e=>setSrch(e.target.value)} placeholder="Buscar por ID, segurado, produto..." style={{width:"100%",padding:"8px 12px 8px 28px",borderRadius:8,border:`1.5px solid ${C.border}`,fontFamily:font,fontSize:13,color:C.body,outline:"none",boxSizing:"border-box"}}/>
           </div>
-          {[{v:fSt,s:setFSt,o:ALL_ST},{v:fRk,s:setFRk,o:ALL_RK}].map((f,i)=>(
+          {[{v:fSt,s:setFSt,o:ALL_ST,lbl:"Status"},{v:fRk,s:setFRk,o:ALL_RK,lbl:"Risco"}].map((f,i)=>(
             <select key={i} value={f.v} onChange={e=>f.s(e.target.value)} style={{padding:"8px 10px",borderRadius:8,border:`1.5px solid ${C.border}`,fontFamily:font,fontSize:13,color:C.body,cursor:"pointer",background:C.white}}>
               {f.o.map(o=><option key={o}>{o}</option>)}
             </select>
           ))}
+          <select value={fSeg} onChange={e=>setFSeg(e.target.value)} style={{padding:"8px 10px",borderRadius:8,border:`1.5px solid ${C.border}`,fontFamily:font,fontSize:13,color:C.body,cursor:"pointer",background:C.white,maxWidth:220}}>
+            {ALL_SEG.map(s=><option key={s} value={s}>{s==="Todos"?"Todos os Clientes":s}</option>)}
+          </select>
           <span style={{fontSize:12,color:C.grey}}>{filtrados.length}/{total}</span>
           <button onClick={()=>setSec("importar")} style={btn(C.navy,true)}><Upload size={12}/>Importar</button>
         </div>
