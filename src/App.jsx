@@ -778,21 +778,14 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
           content: a.content // Uint8Array
         }));
       } else if (ext === "msg") {
-        // Processar .msg via API serverless (requer Node.js buffer)
+        // Processar .msg via API serverless usando FormData (suporta arquivos grandes)
         const buffer = await file.arrayBuffer();
-        // Converter para base64 em chunks para evitar stack overflow
-        const bytes = new Uint8Array(buffer);
-        let binary = '';
-        const chunkSize = 8192;
-        for (let i = 0; i < bytes.length; i += chunkSize) {
-          binary += String.fromCharCode.apply(null, bytes.slice(i, i + chunkSize));
-        }
-        const base64 = btoa(binary);
-        setEmailLog(prev => [...prev, {t:"ok",m:"Enviando .msg para processamento no servidor..."}]);
+        setEmailLog(prev => [...prev, {t:"ok",m:`Enviando .msg (${(buffer.byteLength/1024).toFixed(0)} KB) para processamento no servidor...`}]);
+        const formData = new FormData();
+        formData.append("file", new Blob([buffer]), file.name);
         const msgResp = await fetch("/api/parse-msg", {
           method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({ fileBase64: base64 })
+          body: formData
         });
         if (!msgResp.ok) {
           const errData = await msgResp.json().catch(()=>({error:"Erro desconhecido"}));
