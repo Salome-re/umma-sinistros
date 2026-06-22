@@ -870,7 +870,9 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
       // Juntar tudo e colocar na área de texto
       const finalText = fullText + attachmentTexts.join("");
       setAvisoTxt(finalText);
-      setEmailLog(prev => [...prev, {t:"ok",m:`✓ Pronto! E-mail + ${attachmentTexts.length} anexo(s) processado(s). Clique "Analisar Aviso com IA".`}]);
+      setEmailLog(prev => [...prev, {t:"ok",m:`✓ E-mail + ${attachmentTexts.length} anexo(s) processado(s). Iniciando análise automática...`}]);
+      // Disparar análise da IA automaticamente após processar o e-mail
+      setTimeout(() => { document.getElementById("btn-analisar-aviso")?.click(); }, 500);
     } catch(err) {
       setEmailLog([{t:"err",m:`Erro ao processar e-mail: ${err.message}`}]);
     }
@@ -947,7 +949,7 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
         placeholder={"Cole aqui o e-mail de aviso de sinistro, descreva manualmente, ou arraste um arquivo .eml/.msg acima.\n\nExemplo:\nDe: cliente@empresa.com.br\nAssunto: Aviso de Sinistro - Incêndio no Galpão\n\nPrezados,\nInformamos que ocorreu um incêndio em nosso galpão na data de 25/05/2026..."}
         style={{width:"100%",padding:"12px 14px",borderRadius:8,border:`1.5px solid ${C.border}`,fontFamily:font,fontSize:13,color:C.body,outline:"none",resize:"vertical",minHeight:isMobile?140:180,boxSizing:"border-box"}}/>
 
-      <button onClick={runAvisoIA} disabled={avisoLd||!avisoTxt.trim()} style={{...btn(C.blue),justifyContent:"center",padding:12,opacity:avisoLd||!avisoTxt.trim()?0.55:1}}>
+      <button id="btn-analisar-aviso" onClick={runAvisoIA} disabled={avisoLd||!avisoTxt.trim()} style={{...btn(C.blue),justifyContent:"center",padding:12,opacity:avisoLd||!avisoTxt.trim()?0.55:1}}>
         {avisoLd?<><RefreshCw size={14} style={{animation:"spin 1s linear infinite"}}/>Analisando aviso...</>:<><Zap size={14}/>Analisar Aviso com IA</>}
       </button>
 
