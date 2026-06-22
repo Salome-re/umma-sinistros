@@ -77,7 +77,8 @@ export default async function handler(req, res) {
     }
 
     // Dynamic import para usar no serverless (Node.js)
-    const { default: MsgReader } = await import('@kenjiuno/msgreader');
+    const msgreaderModule = await import('@kenjiuno/msgreader');
+    const MsgReader = msgreaderModule.default?.default || msgreaderModule.default;
     
     const reader = new MsgReader(fileBuffer);
     const msgData = reader.getFileData();
