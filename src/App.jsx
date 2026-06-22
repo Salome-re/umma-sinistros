@@ -780,7 +780,14 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
       } else if (ext === "msg") {
         // Processar .msg via API serverless (requer Node.js buffer)
         const buffer = await file.arrayBuffer();
-        const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+        // Converter para base64 em chunks para evitar stack overflow
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        const chunkSize = 8192;
+        for (let i = 0; i < bytes.length; i += chunkSize) {
+          binary += String.fromCharCode.apply(null, bytes.slice(i, i + chunkSize));
+        }
+        const base64 = btoa(binary);
         setEmailLog(prev => [...prev, {t:"ok",m:"Enviando .msg para processamento no servidor..."}]);
         const msgResp = await fetch("/api/parse-msg", {
           method: "POST",
@@ -844,7 +851,13 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
           // OCR via GPT-4 Vision
           setEmailLog(prev => [...prev, {t:"ok",m:`🔍 OCR em imagem: ${att.filename}...`}]);
           try {
-            const base64 = btoa(String.fromCharCode(...att.content));
+            // Converter para base64 em chunks para evitar stack overflow
+            let binary = '';
+            const chunkSize = 8192;
+            for (let i = 0; i < att.content.length; i += chunkSize) {
+              binary += String.fromCharCode.apply(null, att.content.slice(i, i + chunkSize));
+            }
+            const base64 = btoa(binary);
             const mimeType = att.contentType || `image/${attExt === "jpg" ? "jpeg" : attExt}`;
             const resp = await fetch("/api/ocr", {
               method: "POST",
