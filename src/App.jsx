@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import * as XLSX from "xlsx";
 import PostalMime from "postal-mime";
 import { parse as parseMsgFile } from "@molotochok/msg-viewer";
