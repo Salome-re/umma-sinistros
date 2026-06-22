@@ -8,7 +8,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@kenjiuno/msgreader": "^1.28.0",
+    "@molotochok/msg-viewer": "^1.0.3",
     "lucide-react": "^0.383.0",
     "pdfjs-dist": "^5.7.284",
     "postal-mime": "^2.7.4",

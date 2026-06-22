@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import * as XLSX from "xlsx";
 import PostalMime from "postal-mime";
-// MsgReader (.msg) é processado via API serverless /api/parse-msg (requer Node.js/buffer)
+import { parse as parseMsgFile } from "@molotochok/msg-viewer";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts";
 import { AlertTriangle, CheckCircle, Upload, BarChart2, Home, BookOpen, Shield, X, Eye, Search, Zap, Download, AlertCircle, Database, RefreshCw, CheckSquare, FileSpreadsheet, Menu, ChevronDown, ChevronUp, FileText, Mail, Plus, Trash2, Copy, FileCheck, Clipboard } from "lucide-react";
 
@@ -778,27 +778,17 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
           content: a.content // Uint8Array
         }));
       } else if (ext === "msg") {
-        // Processar .msg via API serverless usando FormData (suporta arquivos grandes)
+        // Processar .msg 100% no browser usando @molotochok/msg-viewer
         const buffer = await file.arrayBuffer();
-        setEmailLog(prev => [...prev, {t:"ok",m:`Enviando .msg (${(buffer.byteLength/1024).toFixed(0)} KB) para processamento no servidor...`}]);
-        const formData = new FormData();
-        formData.append("file", new Blob([buffer]), file.name);
-        const msgResp = await fetch("/api/parse-msg", {
-          method: "POST",
-          body: formData
-        });
-        if (!msgResp.ok) {
-          const errData = await msgResp.json().catch(()=>({error:"Erro desconhecido"}));
-          throw new Error(errData.error || "Erro ao processar .msg");
-        }
-        const msgData = await msgResp.json();
-        body = msgData.body || "";
-        subject = msgData.subject || "";
-        from = msgData.from || "";
-        attachments = (msgData.attachments || []).filter(a=>a.contentBase64).map(a => ({
-          filename: a.filename || "attachment",
-          contentType: a.contentType || "",
-          content: Uint8Array.from(atob(a.contentBase64), c => c.charCodeAt(0))
+        setEmailLog(prev => [...prev, {t:"ok",m:`Processando .msg (${(buffer.byteLength/1024).toFixed(0)} KB) localmente...`}]);
+        const msgData = parseMsgFile(new DataView(buffer));
+        body = msgData.content?.body || msgData.content?.bodyHTML || "";
+        subject = msgData.content?.subject || "";
+        from = msgData.content?.senderEmail || msgData.content?.senderName || "";
+        attachments = (msgData.attachments || []).filter(a => a.content && a.content.length > 0).map(a => ({
+          filename: a.fileName || a.displayName || "attachment",
+          contentType: a.mimeType || "",
+          content: a.content instanceof Uint8Array ? a.content : new Uint8Array(a.content)
         }));
       } else {
         setEmailLog([{t:"err",m:"Formato não suportado. Use .eml ou .msg"}]);
