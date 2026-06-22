@@ -1511,80 +1511,122 @@ Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),
     const pptx = new PptxGenJS();
     pptx.defineLayout({ name: "16x9", width: 10, height: 5.63 });
     pptx.layout = "16x9";
-    
-    // Slide 1: Capa
+
+    // Cores do template UMMA
+    const NAVY = "0D1B4A";
+    const BLUE = "4169E1";
+    const WHITE = "FFFFFF";
+    const GREY = "666666";
+    const DARK = "1E293B";
+    const RED = "CC0000";
+
+    // Helper: adicionar header UMMA em cada slide (logo esquerdo + ícone direito)
+    const addUmmaHeader = (slide) => {
+      slide.background = { color: WHITE };
+      slide.addImage({ path: "/assets/umma_logo.png", x: 0.3, y: 0.2, w: 1.0, h: 0.7 });
+      slide.addImage({ path: "/assets/umma_icon.png", x: 8.5, y: 0.15, w: 0.7, h: 0.3 });
+    };
+
+    // Helper: adicionar rodapé
+    const addFooter = (slide, secao) => {
+      slide.addText(`SINISTROS · ${secao} · ${dataHoje}`, { x: 0.3, y: 5.25, w: 4, h: 0.3, fontSize: 7, fontFace: "Arial", color: GREY });
+      slide.addText("Confidencial · Uso exclusivo da Diretoria · UMMA Corretora de Seguros", { x: 4.5, y: 5.25, w: 5.2, h: 0.3, fontSize: 7, fontFace: "Arial", color: GREY, align: "right" });
+    };
+
+    // ===== SLIDE 1: CAPA (fundo navy como no template) =====
     let slide = pptx.addSlide();
-    slide.background = { color: "FFFFFF" };
-    slide.addText("RELATÓRIO DE SINISTROS", { x: 0.5, y: 1.5, w: 9, h: 1, fontSize: 32, bold: true, fontFace: "Arial", align: "center", color: "1E3A5F" });
-    slide.addText(cliente, { x: 0.5, y: 2.5, w: 9, h: 0.6, fontSize: 20, fontFace: "Arial", align: "center", color: "333333" });
-    slide.addText(dataHoje, { x: 0.5, y: 3.2, w: 9, h: 0.5, fontSize: 14, fontFace: "Arial", align: "center", color: "666666" });
-    slide.addText("UMMA Sinistros — Plataforma de Gestão Inteligente", { x: 0.5, y: 4.5, w: 9, h: 0.4, fontSize: 11, fontFace: "Arial", align: "center", color: "999999" });
-    
-    // Slide 2: Resumo Quantitativo
+    slide.background = { color: NAVY };
+    slide.addImage({ path: "/assets/umma_logo.png", x: 0.3, y: 0.2, w: 1.3, h: 0.9 });
+    slide.addImage({ path: "/assets/umma_icon.png", x: 8.3, y: 0.15, w: 0.8, h: 0.35 });
+    slide.addText("RELATÓRIO DE SINISTROS", { x: 0.5, y: 1.2, w: 9, h: 0.4, fontSize: 11, fontFace: "Arial", color: BLUE, bold: true, letterSpacing: 2 });
+    slide.addText(cliente, { x: 0.5, y: 1.8, w: 9, h: 1.2, fontSize: 36, fontFace: "Arial", color: WHITE, bold: true });
+    slide.addText(`Gestão de Sinistros · ${dataHoje}`, { x: 0.5, y: 3.1, w: 9, h: 0.5, fontSize: 14, fontFace: "Arial", color: "94A3B8" });
+    slide.addText("UMMA Sinistros — Plataforma de Gestão Inteligente", { x: 0.3, y: 5.0, w: 5, h: 0.3, fontSize: 8, fontFace: "Arial", color: "64748B" });
+    slide.addText("Confidencial · Uso exclusivo da Diretoria", { x: 5, y: 5.0, w: 4.7, h: 0.3, fontSize: 8, fontFace: "Arial", color: "64748B", align: "right" });
+
+    // ===== SLIDE 2: RESUMO QUANTITATIVO =====
     slide = pptx.addSlide();
-    slide.background = { color: "FFFFFF" };
-    slide.addText("Resumo Quantitativo", { x: 0.5, y: 0.3, w: 9, h: 0.6, fontSize: 22, bold: true, fontFace: "Arial", color: "1E3A5F" });
+    addUmmaHeader(slide);
+    addFooter(slide, "RESUMO");
+    slide.addText("RESUMO QUANTITATIVO", { x: 2.0, y: 0.3, w: 6, h: 0.5, fontSize: 12, fontFace: "Arial", color: NAVY, bold: true, letterSpacing: 1.5 });
+    
     const resumoStatus = {};
     relCasos.forEach(c => { resumoStatus[c.status] = (resumoStatus[c.status] || 0) + 1; });
-    const resumoTexto = Object.entries(resumoStatus).sort((a,b) => b[1] - a[1])
-      .map(([st, qt]) => `${st}: ${qt}`).join("\n");
-    slide.addText(`Total de Sinistros: ${relCasos.length}\n\n${resumoTexto}`, { x: 0.5, y: 1.0, w: 5, h: 3.5, fontSize: 14, fontFace: "Arial", color: "333333", valign: "top" });
-    // Mini tabela de valores
-    const vencLei = relCasos.filter(c => c.risco === "Vencido sob Lei 15.040").length;
-    const altoR = relCasos.filter(c => c.risco === "Alto").length;
-    slide.addText(`Casos Críticos:\n• Vencido Lei 15.040: ${vencLei}\n• Alto Risco: ${altoR}`, { x: 5.5, y: 1.0, w: 4, h: 2, fontSize: 13, fontFace: "Arial", color: "CC0000", valign: "top" });
+    const statusEntries = Object.entries(resumoStatus).sort((a,b) => b[1] - a[1]);
     
-    // Slide 3: Resumo Financeiro
+    // Cards de status (como no template)
+    let yPos = 1.2;
+    statusEntries.slice(0, 6).forEach(([st, qt], idx) => {
+      const col = idx < 3 ? 0.5 : 5.0;
+      const row = idx < 3 ? idx : idx - 3;
+      slide.addShape(pptx.ShapeType.roundRect, { x: col, y: yPos + row * 1.1, w: 4.3, h: 0.9, fill: { color: "F1F5F9" }, line: { color: "E2E8F0", pt: 1 }, rectRadius: 0.05 });
+      slide.addText(st, { x: col + 0.2, y: yPos + row * 1.1 + 0.1, w: 2.5, h: 0.35, fontSize: 10, fontFace: "Arial", color: GREY });
+      slide.addText(String(qt), { x: col + 0.2, y: yPos + row * 1.1 + 0.4, w: 2, h: 0.4, fontSize: 22, fontFace: "Arial", color: NAVY, bold: true });
+    });
+    
+    slide.addText(`Total: ${relCasos.length} sinistros`, { x: 0.5, y: 4.8, w: 4, h: 0.3, fontSize: 11, fontFace: "Arial", color: NAVY, bold: true });
+
+    // ===== SLIDE 3: RESUMO FINANCEIRO =====
     slide = pptx.addSlide();
-    slide.background = { color: "FFFFFF" };
-    slide.addText("Resumo Financeiro", { x: 0.5, y: 0.3, w: 9, h: 0.6, fontSize: 22, bold: true, fontFace: "Arial", color: "1E3A5F" });
+    addUmmaHeader(slide);
+    addFooter(slide, "FINANCEIRO");
+    slide.addText("RESUMO FINANCEIRO", { x: 2.0, y: 0.3, w: 6, h: 0.5, fontSize: 12, fontFace: "Arial", color: NAVY, bold: true, letterSpacing: 1.5 });
+    
     const totalImpSeg = relCasos.reduce((s, c) => s + (c.importanciaSegurada || 0), 0);
     const totalApurado = relCasos.reduce((s, c) => s + (c.apurado || 0), 0);
     const totalIndenizado = relCasos.reduce((s, c) => s + (c.indenizado || 0), 0);
-    slide.addText([
-      { text: "Importância Segurada Total:\n", options: { fontSize: 13, fontFace: "Arial", color: "666666" } },
-      { text: `${fCur(totalImpSeg)}\n\n`, options: { fontSize: 18, bold: true, fontFace: "Arial", color: "1E3A5F" } },
-      { text: "Valor Apurado Total:\n", options: { fontSize: 13, fontFace: "Arial", color: "666666" } },
-      { text: `${fCur(totalApurado)}\n\n`, options: { fontSize: 18, bold: true, fontFace: "Arial", color: "1E3A5F" } },
-      { text: "Valor Indenizado Total:\n", options: { fontSize: 13, fontFace: "Arial", color: "666666" } },
-      { text: `${fCur(totalIndenizado)}`, options: { fontSize: 18, bold: true, fontFace: "Arial", color: "1E3A5F" } },
-    ], { x: 0.5, y: 1.0, w: 9, h: 4, valign: "top" });
     
-    // Slide 4: Top 10 Sinistros (tabela)
+    const finData = [
+      { label: "IMPORTÂNCIA SEGURADA TOTAL", value: fCur(totalImpSeg) },
+      { label: "VALOR APURADO TOTAL", value: fCur(totalApurado) },
+      { label: "VALOR INDENIZADO TOTAL", value: fCur(totalIndenizado) },
+    ];
+    finData.forEach((item, idx) => {
+      const y = 1.3 + idx * 1.3;
+      slide.addShape(pptx.ShapeType.roundRect, { x: 0.5, y: y, w: 9, h: 1.1, fill: { color: "F8FAFC" }, line: { color: "E2E8F0", pt: 1 }, rectRadius: 0.05 });
+      slide.addText(item.label, { x: 0.8, y: y + 0.15, w: 5, h: 0.3, fontSize: 9, fontFace: "Arial", color: GREY, letterSpacing: 1 });
+      slide.addText(item.value, { x: 0.8, y: y + 0.45, w: 5, h: 0.5, fontSize: 22, fontFace: "Arial", color: NAVY, bold: true });
+    });
+
+    // ===== SLIDE 4: TOP 10 SINISTROS =====
     slide = pptx.addSlide();
-    slide.background = { color: "FFFFFF" };
-    slide.addText("Principais Sinistros", { x: 0.5, y: 0.3, w: 9, h: 0.6, fontSize: 22, bold: true, fontFace: "Arial", color: "1E3A5F" });
-    const top10 = relCasos.sort((a, b) => (b.apurado || 0) - (a.apurado || 0)).slice(0, 10);
+    addUmmaHeader(slide);
+    addFooter(slide, "DETALHAMENTO");
+    slide.addText("PRINCIPAIS SINISTROS", { x: 2.0, y: 0.3, w: 6, h: 0.5, fontSize: 12, fontFace: "Arial", color: NAVY, bold: true, letterSpacing: 1.5 });
+    
+    const top10 = [...relCasos].sort((a, b) => (b.apurado || 0) - (a.apurado || 0)).slice(0, 10);
     const tableRows = [
-      [{ text: "Nº Aviso", options: { bold: true, fontSize: 10, fontFace: "Arial" } }, { text: "Segurado", options: { bold: true, fontSize: 10, fontFace: "Arial" } }, { text: "Produto", options: { bold: true, fontSize: 10, fontFace: "Arial" } }, { text: "Status", options: { bold: true, fontSize: 10, fontFace: "Arial" } }, { text: "Risco", options: { bold: true, fontSize: 10, fontFace: "Arial" } }, { text: "Apurado", options: { bold: true, fontSize: 10, fontFace: "Arial" } }],
+      [{ text: "Nº Aviso", options: { bold: true, fontSize: 9, fontFace: "Arial", color: WHITE, fill: { color: NAVY } } }, { text: "Segurado", options: { bold: true, fontSize: 9, fontFace: "Arial", color: WHITE, fill: { color: NAVY } } }, { text: "Produto", options: { bold: true, fontSize: 9, fontFace: "Arial", color: WHITE, fill: { color: NAVY } } }, { text: "Status", options: { bold: true, fontSize: 9, fontFace: "Arial", color: WHITE, fill: { color: NAVY } } }, { text: "Risco", options: { bold: true, fontSize: 9, fontFace: "Arial", color: WHITE, fill: { color: NAVY } } }, { text: "Apurado", options: { bold: true, fontSize: 9, fontFace: "Arial", color: WHITE, fill: { color: NAVY } } }],
       ...top10.map(c => [
-        { text: c.id || "—", options: { fontSize: 9, fontFace: "Arial" } },
-        { text: (c.segurado || "—").slice(0, 25), options: { fontSize: 9, fontFace: "Arial" } },
-        { text: (c.tipo || "—").slice(0, 18), options: { fontSize: 9, fontFace: "Arial" } },
-        { text: c.status || "—", options: { fontSize: 9, fontFace: "Arial" } },
-        { text: c.risco || "—", options: { fontSize: 9, fontFace: "Arial" } },
-        { text: fCur(c.apurado), options: { fontSize: 9, fontFace: "Arial" } },
+        { text: c.id || "\u2014", options: { fontSize: 8, fontFace: "Arial" } },
+        { text: (c.segurado || "\u2014").slice(0, 25), options: { fontSize: 8, fontFace: "Arial" } },
+        { text: (c.tipo || "\u2014").slice(0, 18), options: { fontSize: 8, fontFace: "Arial" } },
+        { text: c.status || "\u2014", options: { fontSize: 8, fontFace: "Arial" } },
+        { text: c.risco || "\u2014", options: { fontSize: 8, fontFace: "Arial", color: c.risco && c.risco.includes("Vencido") ? RED : DARK } },
+        { text: fCur(c.apurado), options: { fontSize: 8, fontFace: "Arial" } },
       ])
     ];
-    slide.addTable(tableRows, { x: 0.3, y: 1.0, w: 9.4, h: 4, fontSize: 9, fontFace: "Arial", border: { type: "solid", pt: 0.5, color: "CCCCCC" }, colW: [1.2, 2.5, 1.8, 1.5, 1.5, 1.2] });
-    
-    // Slide 5: Casos Críticos
+    slide.addTable(tableRows, { x: 0.3, y: 1.0, w: 9.4, h: 4, fontSize: 8, fontFace: "Arial", border: { type: "solid", pt: 0.5, color: "E2E8F0" }, colW: [1.1, 2.5, 1.7, 1.5, 1.5, 1.3], autoPage: false });
+
+    // ===== SLIDE 5: CASOS CRÍTICOS =====
     slide = pptx.addSlide();
-    slide.background = { color: "FFFFFF" };
-    slide.addText("Casos Críticos — Ação Imediata", { x: 0.5, y: 0.3, w: 9, h: 0.6, fontSize: 22, bold: true, fontFace: "Arial", color: "CC0000" });
+    addUmmaHeader(slide);
+    addFooter(slide, "CRÍTICOS");
+    slide.addText("CASOS CRÍTICOS — AÇÃO IMEDIATA", { x: 2.0, y: 0.3, w: 6, h: 0.5, fontSize: 12, fontFace: "Arial", color: RED, bold: true, letterSpacing: 1.5 });
+    
     const criticos = relCasos.filter(c => ["Vencido sob Lei 15.040", "Alto"].includes(c.risco)).slice(0, 12);
     if (criticos.length > 0) {
       const critRows = [
-        [{ text: "Nº Aviso", options: { bold: true, fontSize: 10, fontFace: "Arial" } }, { text: "Segurado", options: { bold: true, fontSize: 10, fontFace: "Arial" } }, { text: "Risco", options: { bold: true, fontSize: 10, fontFace: "Arial" } }, { text: "Prazo", options: { bold: true, fontSize: 10, fontFace: "Arial" } }, { text: "Norma", options: { bold: true, fontSize: 10, fontFace: "Arial" } }],
+        [{ text: "Nº Aviso", options: { bold: true, fontSize: 9, fontFace: "Arial", color: WHITE, fill: { color: RED } } }, { text: "Segurado", options: { bold: true, fontSize: 9, fontFace: "Arial", color: WHITE, fill: { color: RED } } }, { text: "Risco", options: { bold: true, fontSize: 9, fontFace: "Arial", color: WHITE, fill: { color: RED } } }, { text: "Prazo", options: { bold: true, fontSize: 9, fontFace: "Arial", color: WHITE, fill: { color: RED } } }, { text: "Norma", options: { bold: true, fontSize: 9, fontFace: "Arial", color: WHITE, fill: { color: RED } } }],
         ...criticos.map(c => [
-          { text: c.id || "—", options: { fontSize: 9, fontFace: "Arial" } },
-          { text: (c.segurado || "—").slice(0, 30), options: { fontSize: 9, fontFace: "Arial" } },
-          { text: c.risco || "—", options: { fontSize: 9, fontFace: "Arial", color: "CC0000" } },
-          { text: c.prazoRestante != null ? c.prazoRestante + "d" : "N/A", options: { fontSize: 9, fontFace: "Arial" } },
-          { text: c.normaVigStr || "—", options: { fontSize: 9, fontFace: "Arial" } },
+          { text: c.id || "\u2014", options: { fontSize: 8, fontFace: "Arial" } },
+          { text: (c.segurado || "\u2014").slice(0, 30), options: { fontSize: 8, fontFace: "Arial" } },
+          { text: c.risco || "\u2014", options: { fontSize: 8, fontFace: "Arial", color: RED } },
+          { text: c.prazoRestante != null ? c.prazoRestante + "d" : "N/A", options: { fontSize: 8, fontFace: "Arial" } },
+          { text: c.normaVigStr || "\u2014", options: { fontSize: 8, fontFace: "Arial" } },
         ])
       ];
-      slide.addTable(critRows, { x: 0.3, y: 1.0, w: 9.4, h: 3.5, fontSize: 9, fontFace: "Arial", border: { type: "solid", pt: 0.5, color: "CCCCCC" }, colW: [1.2, 3, 2, 1, 2.2] });
+      slide.addTable(critRows, { x: 0.3, y: 1.0, w: 9.4, h: 3.5, fontSize: 8, fontFace: "Arial", border: { type: "solid", pt: 0.5, color: "FCA5A5" }, colW: [1.2, 3, 2, 1, 2.2], autoPage: false });
     } else {
       slide.addText("Nenhum caso crítico identificado.", { x: 0.5, y: 2.5, w: 9, h: 0.5, fontSize: 16, fontFace: "Arial", color: "28A745", align: "center" });
     }
