@@ -98,11 +98,51 @@ const STATUS_MAP = {
   "EXPECTATIVA/SINISTRO":"Expectativa","EXPECTATIVA":"Expectativa",
 };
 const mapStatus = raw => STATUS_MAP[(raw||"").toUpperCase().trim()] || raw || "Em Regulação";
+// Abreviações para exibição do status original (coluna U) — mantém legível em badges compactos
+const ABBREV_STATUS = {
+  "ENCERRADO SEM INDENIZAÇÃO":"ENC. S/ INDENIZ.",
+  "ENCERRADO S/INDENIZ.":"ENC. S/ INDENIZ.",
+  "ENCERRADO S/ INDENIZ.":"ENC. S/ INDENIZ.",
+  "ENCERRADO S/INDENIZ":"ENC. S/ INDENIZ.",
+  "ENCER.S/ PREJUIZO":"ENC. S/ PREJUÍZO",
+  "ENC. S/ PREJUÍZO":"ENC. S/ PREJUÍZO",
+  "ENC. ABX FQ/ AG.RECLAM":"ENC. ABX FQ/ AG. RECLAM",
+  "ENC. ABX FQ/ AG. RECLAM.":"ENC. ABX FQ/ AG. RECLAM",
+  "ENC. S/IND AG. RECLAM.":"ENC. S/IND AG. RECLAM",
+  "RECUSADO / DECLINADO":"RECUSADO/DECLINADO",
+  "RECUADO/DECLINADO":"RECUSADO/DECLINADO",
+  "PENDENTE - PRAZO NORMAL":"PEND. PRAZO NORMAL",
+  "PENDENTE SEGURADORA":"PEND. SEGURADORA",
+  "P. REGULADOR EXTERNO":"P. REG. EXTERNO",
+  "EXPECTATIVA/SINISTRO":"EXPECTATIVA",
+  "LITIGIO D&O":"LITÍGIO D&O",
+  "LITÍGIO D&O":"LITÍGIO D&O",
+};
+const displayStatus = raw => {
+  const norm = (raw||"").toUpperCase().trim();
+  return ABBREV_STATUS[norm] || raw || "—";
+};
 
 // ── Color helpers ──────────────────────────────────────────────────────────
+// Color helper para status agrupado (KPIs internos)
 const statC = s => ({"Em Regulação":C.blue,"Liquidado":C.green,"Em Litígio":C.purple,
   "Ag. Documentação":C.orange,"Encerrado":C.grey,"Recusado":"#EF4444",
   "Expectativa":C.cyan,"P. Seguradora":C.amber}[s]||C.grey);
+// Color helper para status original (exibição) — mapeia para a cor do grupo correspondente
+const statDisplayC = raw => {
+  const norm = (raw||"").toUpperCase().trim();
+  const grouped = STATUS_MAP[norm];
+  if (grouped) return statC(grouped);
+  // Fallback: tenta match parcial
+  if (norm.includes("ENC.") || norm.includes("ENCERRADO")) return C.grey;
+  if (norm.includes("LIQUID")) return C.green;
+  if (norm.includes("RECUS") || norm.includes("DECLIN")) return "#EF4444";
+  if (norm.includes("LITIG") || norm.includes("LITÍGIO")) return C.purple;
+  if (norm.includes("EXPECT")) return C.cyan;
+  if (norm.includes("P.DOC") || norm.includes("P.VIST") || norm.includes("AGUARD") || norm.includes("PENDENTE DOC")) return C.orange;
+  if (norm.includes("REGULA") || norm.includes("P. SEG") || norm.includes("PEND")) return C.blue;
+  return C.blue;
+};
 const riskC = r => ({Vencido:"#EF4444","Vencido sob Lei 15.040":"#B91C1C",Alto:C.orange,Médio:C.amber,Baixo:C.green,
   Pendente:C.grey,Litígio:C.purple,Expectativa:C.cyan,Resolvido:C.green,
   "Anterior à Norma":C.cyan,"Em Regulação":C.blue,"Sunset — Decaimento":"#B91C1C"}[r]||C.grey);
@@ -207,7 +247,7 @@ const enrichRelatorio = raw => {
   return { id, segurado, seguradora, apolice, tipo, ramo, nAviso, regulador,
     dataAbertura, dataSinistro, dataDocCompleta, inicioVig, terminoVig,
     importanciaSegurada, apurado, franquia, indenizado, valorEstimado,
-    statusOriginal:statusRaw, status, classificacao:isComplexo?"Complexo":"Simples",
+    statusOriginal:statusRaw, status, statusDisplay:displayStatus(statusRaw), classificacao:isComplexo?"Complexo":"Simples",
     prazoLegal, prazoRestante:prazoR!==null?Math.round(prazoR):null,
     prazoArt86: sobreLei15040&&temDoc ? 30-diasRef : null,
     risco, temDocCompleta:temDoc,
@@ -377,8 +417,8 @@ export default function App() {
   const compliance = activeCases.length>0?Math.round(casos.filter(c=>["Baixo","Médio"].includes(c.risco)&&c.temDocCompleta).length/activeCases.length*100):100;
 
   // ── Charts ─────────────────────────────────────────────────────────────────
-  const stChart = Object.entries(casos.reduce((a,c)=>{a[c.status]=(a[c.status]||0)+1;return a},{}))
-    .map(([n,v])=>({n,v,c:statC(n)})).sort((a,b)=>b.v-a.v).slice(0,6);
+  const stChart = Object.entries(casos.reduce((a,c)=>{a[c.statusDisplay]=(a[c.statusDisplay]||0)+1;return a},{}))
+    .map(([n,v])=>({n,v,c:statDisplayC(n)})).sort((a,b)=>b.v-a.v).slice(0,8);
   const rkChart = [{n:"Vencido Lei 15.040",v:vencidos,c:"#B91C1C"},{n:"Alto",v:altoRisco,c:C.orange},
     {n:"Médio",v:casos.filter(c=>c.risco==="Médio").length,c:C.amber},
     {n:"Baixo",v:casos.filter(c=>c.risco==="Baixo").length,c:C.green},
@@ -388,12 +428,12 @@ export default function App() {
     .map(t=>({n:t.length>14?t.slice(0,14)+"…":t,v:casos.filter(c=>c.tipo===t).length}))
     .sort((a,b)=>b.v-a.v).slice(0,6);
 
-  const ALL_ST=["Todos","Em Regulação","Ag. Documentação","Em Litígio","Liquidado","Encerrado","Recusado","Expectativa","P. Seguradora"];
+  const ALL_ST=["Todos", ...Array.from(new Set(casos.map(c=>c.statusDisplay).filter(Boolean))).sort()];
   const ALL_RK=["Todos","Vencido sob Lei 15.040","Alto","Médio","Baixo","Litígio","Pendente","Resolvido","Expectativa","Anterior à Norma","Em Regulação"];
   // Lista de segurados únicos para o dropdown (ordenada alfabeticamente)
   const ALL_SEG = ["Todos", ...Array.from(new Set(casos.map(c=>c.segurado).filter(Boolean))).sort()];
   const filtrados = casos.filter(c=>{
-    const ms=fSt==="Todos"||c.status===fSt, mr=fRk==="Todos"||c.risco===fRk;
+    const ms=fSt==="Todos"||c.statusDisplay===fSt, mr=fRk==="Todos"||c.risco===fRk;
     const mseg=fSeg==="Todos"||c.segurado===fSeg;
     const mb=!srch||[c.id,c.segurado,c.tipo,c.seguradora,c.regulador,c.ramo].some(f=>(f||"").toLowerCase().includes(srch.toLowerCase()));
     return ms&&mr&&mb&&mseg;
@@ -706,8 +746,8 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
             ))}
           </div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            <button onClick={()=>{setAiTxt(`Sinistro: ${selC.id}\nSegurado: ${selC.segurado}\nProduto: ${selC.tipo} (${selC.classificacao})\nSeguradora: ${selC.seguradora}\nStatus: ${selC.status}\nRisco: ${selC.risco}\nNorma: ${selC.norma}\nApurado: ${fCur(selC.apurado)}`);setSec("ai");setSelC(null)}} style={btn(C.blue,isMobile)}><Zap size={12}/>Analisar com IA</button>
-            <button onClick={()=>{setAvisoTxt(`Sinistro: ${selC.id}\nSegurado: ${selC.segurado}\nProduto: ${selC.tipo}\nSeguradora: ${selC.seguradora}\nData Aviso: ${selC.dataAbertura}\nData Sinistro: ${selC.dataSinistro}\nApólice: ${selC.apolice}\nStatus: ${selC.status}\nApurado: ${fCur(selC.apurado)}`);setSec("aviso");setSelC(null)}} style={btn(C.teal,isMobile)}><Mail size={12}/>Gerar E-mail</button>
+            <button onClick={()=>{setAiTxt(`Sinistro: ${selC.id}\nSegurado: ${selC.segurado}\nProduto: ${selC.tipo} (${selC.classificacao})\nSeguradora: ${selC.seguradora}\nStatus: ${selC.statusDisplay}\nRisco: ${selC.risco}\nNorma: ${selC.norma}\nApurado: ${fCur(selC.apurado)}`);setSec("ai");setSelC(null)}} style={btn(C.blue,isMobile)}><Zap size={12}/>Analisar com IA</button>
+            <button onClick={()=>{setAvisoTxt(`Sinistro: ${selC.id}\nSegurado: ${selC.segurado}\nProduto: ${selC.tipo}\nSeguradora: ${selC.seguradora}\nData Aviso: ${selC.dataAbertura}\nData Sinistro: ${selC.dataSinistro}\nApólice: ${selC.apolice}\nStatus: ${selC.statusDisplay}\nApurado: ${fCur(selC.apurado)}`);setSec("aviso");setSelC(null)}} style={btn(C.teal,isMobile)}><Mail size={12}/>Gerar E-mail</button>
             <button onClick={()=>setSelC(null)} style={{...btn(C.white,isMobile),color:C.grey}}>Fechar</button>
           </div>
         </div>
@@ -1172,7 +1212,7 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
                 </div>
                 <div style={{display:"flex",flexDirection:"column",gap:4,alignItems:"flex-end"}}>
                   <span style={bdg(riskC(c.risco),riskBg(c.risco))}>{c.risco}</span>
-                  <span style={{...bdg(statC(c.status)),fontSize:10}}>{c.status}</span>
+                  <span style={{...bdg(statDisplayC(c.statusDisplay)),fontSize:10}}>{c.statusDisplay}</span>
                 </div>
               </div>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:6,paddingTop:6,borderTop:`1px solid ${C.border}`}}>
@@ -1203,7 +1243,7 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
                     <td style={{padding:"8px 8px",fontSize:11,color:C.grey,whiteSpace:"nowrap"}}>{c.regulador}</td>
                     <td style={{padding:"8px 8px",fontSize:11,color:C.grey,whiteSpace:"nowrap"}}>{c.dataAbertura}</td>
                     <td style={{padding:"8px 8px",fontSize:11,color:C.grey,whiteSpace:"nowrap"}}>{c.dataDocCompleta}</td>
-                    <td style={{padding:"8px 8px"}}><span style={{...bdg(statC(c.status)),fontSize:10}}>{c.status}</span>{c.sobreLei15040&&<span style={{...bdg(C.teal,"#F0FDF4"),fontSize:9,marginLeft:3}}>Lei 15.040</span>}</td>
+                    <td style={{padding:"8px 8px"}}><span style={{...bdg(statDisplayC(c.statusDisplay)),fontSize:10}}>{c.statusDisplay}</span>{c.sobreLei15040&&<span style={{...bdg(C.teal,"#F0FDF4"),fontSize:9,marginLeft:3}}>Lei 15.040</span>}</td>
                     <td style={{padding:"8px 8px"}}><span style={bdg(riskC(c.risco),riskBg(c.risco))}>{c.risco}</span></td>
                     <td style={{padding:"8px 8px",fontSize:11,fontWeight:700,color:riskC(c.risco),whiteSpace:"nowrap"}}>{c.prazoRestante!=null?(c.prazoRestante<0?`−${Math.abs(c.prazoRestante)}d`:c.prazoRestante+"d"):"—"}</td>
                     <td style={{padding:"8px 8px",fontSize:11,color:C.grey,whiteSpace:"nowrap"}}>{fCur(c.apurado)}</td>
@@ -1448,7 +1488,7 @@ Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),
     
     // Resumo por status
     const resumoStatus = {};
-    relCasos.forEach(c => { resumoStatus[c.status] = (resumoStatus[c.status] || 0) + 1; });
+    relCasos.forEach(c => { resumoStatus[c.statusDisplay] = (resumoStatus[c.statusDisplay] || 0) + 1; });
     
     // Totais financeiros
     const totalImpSeg = relCasos.reduce((s, c) => s + (c.importanciaSegurada || 0), 0);
@@ -1487,7 +1527,7 @@ Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),
               }),
               ...relCasos.slice(0, 500).map(c =>
                 new TableRow({
-                  children: [c.id || "—", c.segurado || "—", c.tipo || "—", c.seguradora || "—", c.status || "—", c.risco || "—", c.dataAbertura || "—", fCur(c.apurado)].map(v =>
+                  children: [c.id || "—", c.segurado || "—", c.tipo || "—", c.seguradora || "—", c.statusDisplay || "—", c.risco || "—", c.dataAbertura || "—", fCur(c.apurado)].map(v =>
                     new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: String(v), size: 16, font: "Arial" })] })], width: { size: 12.5, type: WidthType.PERCENTAGE } })
                   )
                 })
@@ -1558,7 +1598,7 @@ Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),
     slide.addText("RESUMO QUANTITATIVO", { x: 2.0, y: 0.3, w: 6, h: 0.5, fontSize: 12, fontFace: "Arial", color: NAVY, bold: true, letterSpacing: 1.5 });
     
     const resumoStatus = {};
-    relCasos.forEach(c => { resumoStatus[c.status] = (resumoStatus[c.status] || 0) + 1; });
+    relCasos.forEach(c => { resumoStatus[c.statusDisplay] = (resumoStatus[c.statusDisplay] || 0) + 1; });
     const statusEntries = Object.entries(resumoStatus).sort((a,b) => b[1] - a[1]);
     
     // Cards de status (como no template)
@@ -1608,7 +1648,7 @@ Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),
         { text: c.id || "\u2014", options: { fontSize: 8, fontFace: "Arial" } },
         { text: (c.segurado || "\u2014").slice(0, 25), options: { fontSize: 8, fontFace: "Arial" } },
         { text: (c.tipo || "\u2014").slice(0, 18), options: { fontSize: 8, fontFace: "Arial" } },
-        { text: c.status || "\u2014", options: { fontSize: 8, fontFace: "Arial" } },
+        { text: c.statusDisplay || "\u2014", options: { fontSize: 8, fontFace: "Arial" } },
         { text: c.risco || "\u2014", options: { fontSize: 8, fontFace: "Arial", color: c.risco && c.risco.includes("Vencido") ? RED : DARK } },
         { text: fCur(c.apurado), options: { fontSize: 8, fontFace: "Arial" } },
       ])
@@ -1654,7 +1694,7 @@ Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),
         const seg = c.segurado || "Não informado";
         if (!map[seg]) map[seg] = { nome: seg, total: 0, statuses: {}, ramos: {} };
         map[seg].total++;
-        map[seg].statuses[c.status] = (map[seg].statuses[c.status] || 0) + 1;
+        map[seg].statuses[c.statusDisplay] = (map[seg].statuses[c.statusDisplay] || 0) + 1;
         const ramo = c.tipo || "Não informado";
         map[seg].ramos[ramo] = (map[seg].ramos[ramo] || 0) + 1;
       });
@@ -1732,7 +1772,7 @@ Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),
                       <td style={{padding:"7px 10px",fontWeight:600,color:C.navy}}>{c.id||"—"}</td>
                       <td style={{padding:"7px 10px"}}>{c.tipo||"—"}</td>
                       <td style={{padding:"7px 10px"}}>{c.seguradora||"—"}</td>
-                      <td style={{padding:"7px 10px"}}><span style={{background:C.light,color:C.navy,padding:"2px 8px",borderRadius:10,fontSize:10,fontWeight:600}}>{c.status||"—"}</span></td>
+                      <td style={{padding:"7px 10px"}}><span style={{background:C.light,color:C.navy,padding:"2px 8px",borderRadius:10,fontSize:10,fontWeight:600}}>{c.statusDisplay||"—"}</span></td>
                       <td style={{padding:"7px 10px"}}><span style={{color:c.risco&&c.risco.includes("Vencido")?"#EF4444":c.risco==="Alto"?"#F59E0B":C.green,fontWeight:600,fontSize:10.5}}>{c.risco||"—"}</span></td>
                       <td style={{padding:"7px 10px",fontWeight:600}}>{fCur(c.apurado)}</td>
                     </tr>
@@ -1821,7 +1861,7 @@ Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),
                     <td style={{padding:"6px",fontSize:11,maxWidth:140,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.segurado}</td>
                     <td style={{padding:"6px",fontSize:10.5,color:C.grey}}>{c.tipo}</td>
                     <td style={{padding:"6px",fontSize:10.5,color:C.grey}}>{c.seguradora}</td>
-                    <td style={{padding:"6px"}}><span style={{...bdg(statC(c.status)),fontSize:9.5}}>{c.status}</span></td>
+                    <td style={{padding:"6px"}}><span style={{...bdg(statDisplayC(c.statusDisplay)),fontSize:9.5}}>{c.statusDisplay}</span></td>
                     <td style={{padding:"6px"}}><span style={bdg(riskC(c.risco),riskBg(c.risco))}>{c.risco}</span></td>
                     <td style={{padding:"6px",fontSize:10.5,color:C.grey}}>{c.dataAbertura}</td>
                     <td style={{padding:"6px",fontSize:10.5,color:C.grey}}>{fCur(c.apurado)}</td>
