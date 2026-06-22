@@ -1650,7 +1650,7 @@ Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),
     // Lista única de segurados com contagem
     const seguradosList = React.useMemo(() => {
       const map = {};
-      dados.forEach(c => {
+      casos.forEach(c => {
         const seg = c.segurado || "Não informado";
         if (!map[seg]) map[seg] = { nome: seg, total: 0, statuses: {}, ramos: {} };
         map[seg].total++;
@@ -1659,12 +1659,12 @@ Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),
         map[seg].ramos[ramo] = (map[seg].ramos[ramo] || 0) + 1;
       });
       return Object.values(map).sort((a, b) => b.total - a.total);
-    }, [dados]);
+    }, [casos]);
 
     const filtSegurados = seguradosList.filter(s => !srchSeg || s.nome.toLowerCase().includes(srchSeg.toLowerCase()));
 
     // Casos do segurado selecionado
-    const casosSeg = selSegurado ? dados.filter(c => c.segurado === selSegurado.nome) : [];
+    const casosSeg = selSegurado ? casos.filter(c => c.segurado === selSegurado.nome) : [];
 
     // Dados para gráfico de status do segurado selecionado
     const statusChartData = selSegurado ? Object.entries(selSegurado.statuses).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value) : [];
@@ -1758,7 +1758,7 @@ Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),
           {/* Resumo */}
           <div style={{display:"flex",gap:12,marginBottom:16,flexWrap:"wrap"}}>
             <div style={{background:C.bg,borderRadius:8,padding:"8px 14px"}}><span style={{fontSize:10,color:C.grey,fontWeight:600}}>TOTAL SEGURADOS</span><div style={{fontSize:18,fontWeight:800,color:C.navy}}>{seguradosList.length}</div></div>
-            <div style={{background:C.bg,borderRadius:8,padding:"8px 14px"}}><span style={{fontSize:10,color:C.grey,fontWeight:600}}>TOTAL SINISTROS</span><div style={{fontSize:18,fontWeight:800,color:C.blue}}>{dados.length}</div></div>
+            <div style={{background:C.bg,borderRadius:8,padding:"8px 14px"}}><span style={{fontSize:10,color:C.grey,fontWeight:600}}>TOTAL SINISTROS</span><div style={{fontSize:18,fontWeight:800,color:C.blue}}>{casos.length}</div></div>
           </div>
           {/* Lista de segurados */}
           <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr 1fr",gap:10}}>
