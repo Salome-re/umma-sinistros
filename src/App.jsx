@@ -3,7 +3,11 @@ import * as XLSX from "xlsx";
 import PostalMime from "postal-mime";
 import { parse as parseMsgFile } from "@molotochok/msg-viewer";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts";
-import { AlertTriangle, CheckCircle, Upload, BarChart2, Home, BookOpen, Shield, X, Eye, Search, Zap, Download, AlertCircle, Database, RefreshCw, CheckSquare, FileSpreadsheet, Menu, ChevronDown, ChevronUp, FileText, Mail, Plus, Trash2, Copy, FileCheck, Clipboard } from "lucide-react";
+import { AlertTriangle, CheckCircle, Upload, BarChart2, Home, BookOpen, Shield, X, Eye, Search, Zap, Download, AlertCircle, Database, RefreshCw, CheckSquare, FileSpreadsheet, Menu, ChevronDown, ChevronUp, FileText, Mail, Plus, Trash2, Copy, FileCheck, Clipboard, FileOutput } from "lucide-react";
+import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, HeadingLevel, WidthType, AlignmentType, BorderStyle } from "docx";
+import PptxGenJS from "pptxgenjs";
+import { saveAs } from "file-saver";
+
 
 // ── Brand ─────────────────────────────────────────────────────────────────
 const C = { navy:"#02124C", blue:"#3E75FF", light:"#E0E6FC", green:"#2CDD7C",
@@ -565,10 +569,11 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
     {id:"ai",        lb:"IA",         ic:Zap},
     {id:"normas",    lb:"Normas",     ic:BookOpen},
     {id:"importar",  lb:"Importar",   ic:Upload},
+    {id:"relatorios",lb:"Relatórios", ic:FileOutput},
   ];
   const titles={aviso:"Aviso de Sinistro",dashboard:"Dashboard",casos:"Gestão de Casos",
     apolices:"Apólices Vigentes",instrucoes:"Instruções de Regulação",
-    ai:"Análise por IA",normas:"Normas SUSEP",importar:"Importar Dados"};
+    ai:"Análise por IA",normas:"Normas SUSEP",importar:"Importar Dados",relatorios:"Relatórios"};
 
   // ── SIDEBAR ───────────────────────────────────────────────────────────────
   const Sidebar = () => (
@@ -1422,6 +1427,233 @@ Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),
   // ══════════════════════════════════════════════════════════════════════════
   // ── NORMAS SECTION ────────────────────────────────────────────────────────
   // ══════════════════════════════════════════════════════════════════════════
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ── RELATÓRIOS SECTION ─────────────────────────────────────────────────────
+  const [relCliente, setRelCliente] = useState("Todos");
+  const relCasos = relCliente === "Todos" ? casos : casos.filter(c => c.segurado === relCliente);
+
+  const gerarWord = async () => {
+    const cliente = relCliente === "Todos" ? "Todos os Clientes" : relCliente;
+    const dataHoje = new Date().toLocaleDateString("pt-BR");
+    
+    // Resumo por status
+    const resumoStatus = {};
+    relCasos.forEach(c => { resumoStatus[c.status] = (resumoStatus[c.status] || 0) + 1; });
+    
+    // Totais financeiros
+    const totalImpSeg = relCasos.reduce((s, c) => s + (c.importanciaSegurada || 0), 0);
+    const totalApurado = relCasos.reduce((s, c) => s + (c.apurado || 0), 0);
+    const totalIndenizado = relCasos.reduce((s, c) => s + (c.indenizado || 0), 0);
+    
+    const doc = new Document({
+      sections: [{
+        properties: {},
+        children: [
+          new Paragraph({ children: [new TextRun({ text: "RELATÓRIO DE SINISTROS", bold: true, size: 32, font: "Arial" })], heading: HeadingLevel.HEADING_1, alignment: AlignmentType.CENTER }),
+          new Paragraph({ children: [new TextRun({ text: `Cliente: ${cliente}`, size: 24, font: "Arial" })], alignment: AlignmentType.CENTER, spacing: { after: 100 } }),
+          new Paragraph({ children: [new TextRun({ text: `Data: ${dataHoje}`, size: 20, font: "Arial", color: "666666" })], alignment: AlignmentType.CENTER, spacing: { after: 400 } }),
+          
+          new Paragraph({ children: [new TextRun({ text: "1. RESUMO GERAL", bold: true, size: 24, font: "Arial" })], heading: HeadingLevel.HEADING_2, spacing: { before: 300, after: 200 } }),
+          new Paragraph({ children: [new TextRun({ text: `Total de Sinistros: ${relCasos.length}`, size: 22, font: "Arial" })], spacing: { after: 100 } }),
+          new Paragraph({ children: [new TextRun({ text: `Importância Segurada Total: ${fCur(totalImpSeg)}`, size: 22, font: "Arial" })], spacing: { after: 100 } }),
+          new Paragraph({ children: [new TextRun({ text: `Valor Apurado Total: ${fCur(totalApurado)}`, size: 22, font: "Arial" })], spacing: { after: 100 } }),
+          new Paragraph({ children: [new TextRun({ text: `Valor Indenizado Total: ${fCur(totalIndenizado)}`, size: 22, font: "Arial" })], spacing: { after: 200 } }),
+          
+          new Paragraph({ children: [new TextRun({ text: "2. DISTRIBUIÇÃO POR STATUS", bold: true, size: 24, font: "Arial" })], heading: HeadingLevel.HEADING_2, spacing: { before: 300, after: 200 } }),
+          ...Object.entries(resumoStatus).sort((a,b) => b[1] - a[1]).map(([st, qt]) =>
+            new Paragraph({ children: [new TextRun({ text: `• ${st}: ${qt} caso(s)`, size: 22, font: "Arial" })], spacing: { after: 60 } })
+          ),
+          
+          new Paragraph({ children: [new TextRun({ text: "3. DETALHAMENTO DOS SINISTROS", bold: true, size: 24, font: "Arial" })], heading: HeadingLevel.HEADING_2, spacing: { before: 400, after: 200 } }),
+          
+          // Tabela de sinistros
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              new TableRow({
+                children: ["Nº Aviso", "Segurado", "Produto", "Seguradora", "Status", "Risco", "Dt. Aviso", "Apurado"].map(h =>
+                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: h, bold: true, size: 16, font: "Arial" })] })], width: { size: 12.5, type: WidthType.PERCENTAGE } })
+                )
+              }),
+              ...relCasos.slice(0, 500).map(c =>
+                new TableRow({
+                  children: [c.id || "—", c.segurado || "—", c.tipo || "—", c.seguradora || "—", c.status || "—", c.risco || "—", c.dataAbertura || "—", fCur(c.apurado)].map(v =>
+                    new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: String(v), size: 16, font: "Arial" })] })], width: { size: 12.5, type: WidthType.PERCENTAGE } })
+                  )
+                })
+              )
+            ]
+          }),
+          
+          new Paragraph({ children: [new TextRun({ text: "4. CASOS CRÍTICOS", bold: true, size: 24, font: "Arial" })], heading: HeadingLevel.HEADING_2, spacing: { before: 400, after: 200 } }),
+          ...relCasos.filter(c => ["Vencido sob Lei 15.040", "Alto"].includes(c.risco)).map(c =>
+            new Paragraph({ children: [new TextRun({ text: `⚠ ${c.id} — ${c.segurado} — ${c.risco} — Prazo: ${c.prazoRestante != null ? c.prazoRestante + "d" : "N/A"}`, size: 20, font: "Arial", color: "CC0000" })], spacing: { after: 80 } })
+          ),
+          ...(relCasos.filter(c => ["Vencido sob Lei 15.040", "Alto"].includes(c.risco)).length === 0 ? [new Paragraph({ children: [new TextRun({ text: "Nenhum caso crítico identificado.", size: 20, font: "Arial", italics: true })] })] : []),
+          
+          new Paragraph({ children: [new TextRun({ text: "\n\nRelatório gerado automaticamente pela plataforma UMMA Sinistros.", size: 18, font: "Arial", color: "999999", italics: true })], spacing: { before: 600 } }),
+        ]
+      }]
+    });
+    
+    const blob = await Packer.toBlob(doc);
+    const nomeArq = `Relatorio_Sinistros_${cliente.replace(/[^a-zA-Z0-9]/g, "_")}_${dataHoje.replace(/\//g, "-")}.docx`;
+    saveAs(blob, nomeArq);
+  };
+
+  const gerarPPT = () => {
+    const cliente = relCliente === "Todos" ? "Todos os Clientes" : relCliente;
+    const dataHoje = new Date().toLocaleDateString("pt-BR");
+    
+    const pptx = new PptxGenJS();
+    pptx.defineLayout({ name: "16x9", width: 10, height: 5.63 });
+    pptx.layout = "16x9";
+    
+    // Slide 1: Capa
+    let slide = pptx.addSlide();
+    slide.background = { color: "FFFFFF" };
+    slide.addText("RELATÓRIO DE SINISTROS", { x: 0.5, y: 1.5, w: 9, h: 1, fontSize: 32, bold: true, fontFace: "Arial", align: "center", color: "1E3A5F" });
+    slide.addText(cliente, { x: 0.5, y: 2.5, w: 9, h: 0.6, fontSize: 20, fontFace: "Arial", align: "center", color: "333333" });
+    slide.addText(dataHoje, { x: 0.5, y: 3.2, w: 9, h: 0.5, fontSize: 14, fontFace: "Arial", align: "center", color: "666666" });
+    slide.addText("UMMA Sinistros — Plataforma de Gestão Inteligente", { x: 0.5, y: 4.5, w: 9, h: 0.4, fontSize: 11, fontFace: "Arial", align: "center", color: "999999" });
+    
+    // Slide 2: Resumo Quantitativo
+    slide = pptx.addSlide();
+    slide.background = { color: "FFFFFF" };
+    slide.addText("Resumo Quantitativo", { x: 0.5, y: 0.3, w: 9, h: 0.6, fontSize: 22, bold: true, fontFace: "Arial", color: "1E3A5F" });
+    const resumoStatus = {};
+    relCasos.forEach(c => { resumoStatus[c.status] = (resumoStatus[c.status] || 0) + 1; });
+    const resumoTexto = Object.entries(resumoStatus).sort((a,b) => b[1] - a[1])
+      .map(([st, qt]) => `${st}: ${qt}`).join("\n");
+    slide.addText(`Total de Sinistros: ${relCasos.length}\n\n${resumoTexto}`, { x: 0.5, y: 1.0, w: 5, h: 3.5, fontSize: 14, fontFace: "Arial", color: "333333", valign: "top" });
+    // Mini tabela de valores
+    const vencLei = relCasos.filter(c => c.risco === "Vencido sob Lei 15.040").length;
+    const altoR = relCasos.filter(c => c.risco === "Alto").length;
+    slide.addText(`Casos Críticos:\n• Vencido Lei 15.040: ${vencLei}\n• Alto Risco: ${altoR}`, { x: 5.5, y: 1.0, w: 4, h: 2, fontSize: 13, fontFace: "Arial", color: "CC0000", valign: "top" });
+    
+    // Slide 3: Resumo Financeiro
+    slide = pptx.addSlide();
+    slide.background = { color: "FFFFFF" };
+    slide.addText("Resumo Financeiro", { x: 0.5, y: 0.3, w: 9, h: 0.6, fontSize: 22, bold: true, fontFace: "Arial", color: "1E3A5F" });
+    const totalImpSeg = relCasos.reduce((s, c) => s + (c.importanciaSegurada || 0), 0);
+    const totalApurado = relCasos.reduce((s, c) => s + (c.apurado || 0), 0);
+    const totalIndenizado = relCasos.reduce((s, c) => s + (c.indenizado || 0), 0);
+    slide.addText([
+      { text: "Importância Segurada Total:\n", options: { fontSize: 13, fontFace: "Arial", color: "666666" } },
+      { text: `${fCur(totalImpSeg)}\n\n`, options: { fontSize: 18, bold: true, fontFace: "Arial", color: "1E3A5F" } },
+      { text: "Valor Apurado Total:\n", options: { fontSize: 13, fontFace: "Arial", color: "666666" } },
+      { text: `${fCur(totalApurado)}\n\n`, options: { fontSize: 18, bold: true, fontFace: "Arial", color: "1E3A5F" } },
+      { text: "Valor Indenizado Total:\n", options: { fontSize: 13, fontFace: "Arial", color: "666666" } },
+      { text: `${fCur(totalIndenizado)}`, options: { fontSize: 18, bold: true, fontFace: "Arial", color: "1E3A5F" } },
+    ], { x: 0.5, y: 1.0, w: 9, h: 4, valign: "top" });
+    
+    // Slide 4: Top 10 Sinistros (tabela)
+    slide = pptx.addSlide();
+    slide.background = { color: "FFFFFF" };
+    slide.addText("Principais Sinistros", { x: 0.5, y: 0.3, w: 9, h: 0.6, fontSize: 22, bold: true, fontFace: "Arial", color: "1E3A5F" });
+    const top10 = relCasos.sort((a, b) => (b.apurado || 0) - (a.apurado || 0)).slice(0, 10);
+    const tableRows = [
+      [{ text: "Nº Aviso", options: { bold: true, fontSize: 10, fontFace: "Arial" } }, { text: "Segurado", options: { bold: true, fontSize: 10, fontFace: "Arial" } }, { text: "Produto", options: { bold: true, fontSize: 10, fontFace: "Arial" } }, { text: "Status", options: { bold: true, fontSize: 10, fontFace: "Arial" } }, { text: "Risco", options: { bold: true, fontSize: 10, fontFace: "Arial" } }, { text: "Apurado", options: { bold: true, fontSize: 10, fontFace: "Arial" } }],
+      ...top10.map(c => [
+        { text: c.id || "—", options: { fontSize: 9, fontFace: "Arial" } },
+        { text: (c.segurado || "—").slice(0, 25), options: { fontSize: 9, fontFace: "Arial" } },
+        { text: (c.tipo || "—").slice(0, 18), options: { fontSize: 9, fontFace: "Arial" } },
+        { text: c.status || "—", options: { fontSize: 9, fontFace: "Arial" } },
+        { text: c.risco || "—", options: { fontSize: 9, fontFace: "Arial" } },
+        { text: fCur(c.apurado), options: { fontSize: 9, fontFace: "Arial" } },
+      ])
+    ];
+    slide.addTable(tableRows, { x: 0.3, y: 1.0, w: 9.4, h: 4, fontSize: 9, fontFace: "Arial", border: { type: "solid", pt: 0.5, color: "CCCCCC" }, colW: [1.2, 2.5, 1.8, 1.5, 1.5, 1.2] });
+    
+    // Slide 5: Casos Críticos
+    slide = pptx.addSlide();
+    slide.background = { color: "FFFFFF" };
+    slide.addText("Casos Críticos — Ação Imediata", { x: 0.5, y: 0.3, w: 9, h: 0.6, fontSize: 22, bold: true, fontFace: "Arial", color: "CC0000" });
+    const criticos = relCasos.filter(c => ["Vencido sob Lei 15.040", "Alto"].includes(c.risco)).slice(0, 12);
+    if (criticos.length > 0) {
+      const critRows = [
+        [{ text: "Nº Aviso", options: { bold: true, fontSize: 10, fontFace: "Arial" } }, { text: "Segurado", options: { bold: true, fontSize: 10, fontFace: "Arial" } }, { text: "Risco", options: { bold: true, fontSize: 10, fontFace: "Arial" } }, { text: "Prazo", options: { bold: true, fontSize: 10, fontFace: "Arial" } }, { text: "Norma", options: { bold: true, fontSize: 10, fontFace: "Arial" } }],
+        ...criticos.map(c => [
+          { text: c.id || "—", options: { fontSize: 9, fontFace: "Arial" } },
+          { text: (c.segurado || "—").slice(0, 30), options: { fontSize: 9, fontFace: "Arial" } },
+          { text: c.risco || "—", options: { fontSize: 9, fontFace: "Arial", color: "CC0000" } },
+          { text: c.prazoRestante != null ? c.prazoRestante + "d" : "N/A", options: { fontSize: 9, fontFace: "Arial" } },
+          { text: c.normaVigStr || "—", options: { fontSize: 9, fontFace: "Arial" } },
+        ])
+      ];
+      slide.addTable(critRows, { x: 0.3, y: 1.0, w: 9.4, h: 3.5, fontSize: 9, fontFace: "Arial", border: { type: "solid", pt: 0.5, color: "CCCCCC" }, colW: [1.2, 3, 2, 1, 2.2] });
+    } else {
+      slide.addText("Nenhum caso crítico identificado.", { x: 0.5, y: 2.5, w: 9, h: 0.5, fontSize: 16, fontFace: "Arial", color: "28A745", align: "center" });
+    }
+    
+    const nomeArq = `Apresentacao_Sinistros_${cliente.replace(/[^a-zA-Z0-9]/g, "_")}_${dataHoje.replace(/\//g, "-")}.pptx`;
+    pptx.writeFile({ fileName: nomeArq });
+  };
+
+  const RelatoriosSection = () => (
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      <div style={{...card,padding:20}}>
+        <h3 style={{margin:"0 0 12px",fontSize:15,fontWeight:700,color:C.navy}}>Gerar Relatórios por Cliente</h3>
+        <p style={{margin:"0 0 16px",fontSize:12.5,color:C.grey}}>Selecione o cliente e gere um relatório Word (.docx) editável ou uma apresentação PPT (.pptx) com os dados dos sinistros.</p>
+        
+        <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",marginBottom:16}}>
+          <label style={{fontSize:12,fontWeight:600,color:C.body}}>Cliente:</label>
+          <select value={relCliente} onChange={e=>setRelCliente(e.target.value)} style={{padding:"9px 14px",borderRadius:8,border:`1.5px solid ${C.border}`,fontFamily:font,fontSize:13,color:C.body,background:C.white,minWidth:250}}>
+            {ALL_SEG.map(s=><option key={s} value={s}>{s==="Todos"?"Todos os Clientes":s}</option>)}
+          </select>
+          <span style={{fontSize:12,color:C.grey}}>{relCasos.length} caso(s) selecionado(s)</span>
+        </div>
+        
+        <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+          <button onClick={gerarWord} disabled={relCasos.length===0} style={{...btn(C.blue),opacity:relCasos.length===0?0.5:1}}>
+            <FileText size={14}/>Gerar Relatório Word (.docx)
+          </button>
+          <button onClick={gerarPPT} disabled={relCasos.length===0} style={{...btn(C.navy),opacity:relCasos.length===0?0.5:1}}>
+            <FileSpreadsheet size={14}/>Gerar Apresentação PPT (.pptx)
+          </button>
+        </div>
+      </div>
+      
+      {relCasos.length > 0 && (
+        <div style={{...card,padding:16}}>
+          <h4 style={{margin:"0 0 10px",fontSize:13,fontWeight:600,color:C.navy}}>Prévia — {relCliente === "Todos" ? "Todos os Clientes" : relCliente} ({relCasos.length} sinistros)</h4>
+          <div style={{overflowX:"auto",maxHeight:350,overflowY:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",minWidth:700}}>
+              <thead><tr style={{background:C.navy}}>{["Nº Aviso","Segurado","Produto","Seguradora","Status","Risco","Dt. Aviso","Apurado"].map(h=><th key={h} style={{padding:"7px 6px",textAlign:"left",fontSize:10,fontWeight:600,color:"rgba(255,255,255,0.85)",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
+              <tbody>
+                {relCasos.slice(0,50).map((c,i)=>(
+                  <tr key={i} style={{borderBottom:`1px solid ${C.border}`}}>
+                    <td style={{padding:"6px",fontSize:11,fontWeight:600,color:C.blue}}>{c.id||"—"}</td>
+                    <td style={{padding:"6px",fontSize:11,maxWidth:140,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.segurado}</td>
+                    <td style={{padding:"6px",fontSize:10.5,color:C.grey}}>{c.tipo}</td>
+                    <td style={{padding:"6px",fontSize:10.5,color:C.grey}}>{c.seguradora}</td>
+                    <td style={{padding:"6px"}}><span style={{...bdg(statC(c.status)),fontSize:9.5}}>{c.status}</span></td>
+                    <td style={{padding:"6px"}}><span style={bdg(riskC(c.risco),riskBg(c.risco))}>{c.risco}</span></td>
+                    <td style={{padding:"6px",fontSize:10.5,color:C.grey}}>{c.dataAbertura}</td>
+                    <td style={{padding:"6px",fontSize:10.5,color:C.grey}}>{fCur(c.apurado)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {relCasos.length>50&&<div style={{padding:8,textAlign:"center",fontSize:11,color:C.grey}}>Mostrando 50 de {relCasos.length}. O relatório incluirá todos.</div>}
+          </div>
+        </div>
+      )}
+      
+      {relCasos.length === 0 && (
+        <div style={{...card,padding:28,textAlign:"center",color:C.grey,fontSize:13}}>
+          {casos.length === 0 ? (
+            <span>Nenhum dado importado. <button onClick={()=>setSec("importar")} style={{background:"transparent",border:"none",color:C.blue,cursor:"pointer",fontWeight:600,fontFamily:font}}>Importar planilha →</button></span>
+          ) : (
+            <span>Nenhum caso encontrado para o cliente selecionado.</span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+
   const NormasSection = () => (
     <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:12}}>
       {NORMAS.map(n=>(
@@ -1515,6 +1747,7 @@ Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),
       case "ai":         return <AISection/>;
       case "normas":     return <NormasSection/>;
       case "importar":   return <ImportSection/>;
+      case "relatorios": return <RelatoriosSection/>;
       default:           return <AvisoSection/>;
     }
   };
