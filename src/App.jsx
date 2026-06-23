@@ -2094,9 +2094,13 @@ Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),
 
     const handleInvite = async (e) => {
       e.preventDefault();
-      setInviteLoading(true);
       setInviteMsg("");
       setInviteErr("");
+      if (!newEmail.toLowerCase().endsWith("@ummaseguros.com.br")) {
+        setInviteErr("Apenas e-mails @ummaseguros.com.br são permitidos.");
+        return;
+      }
+      setInviteLoading(true);
       try {
         await addUser(newEmail, newNome, newRole, authUser.nome);
         // Enviar e-mail de convite
