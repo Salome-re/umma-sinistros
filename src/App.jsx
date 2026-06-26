@@ -172,7 +172,7 @@ const parseBR = s => {
 };
 
 // ── Enrich sinistro ────────────────────────────────────────────────────────
-const enrichRelatorio = raw => {
+const enrichRelatorio = (raw, currencies = {}) => {
   const segurado = raw["SEGURADO"]||"", seguradora = raw["SEGURADORA"]||"";
   const id = String(raw["Nº AVISO"]||raw["N° AVISO"]||"").trim()||`SIN-${Math.random().toString(36).slice(2,7).toUpperCase()}`;
   const tipo = raw["PRODUTO"]||"", ramo = raw["RAMO"]||"";
@@ -181,6 +181,15 @@ const enrichRelatorio = raw => {
   const importanciaSegurada = Number(raw["IMP. SEG."])||0;
   const apurado = Number(raw["APURADO"])||0, franquia = Number(raw["FRANQUIA"])||0;
   const indenizado = Number(raw["INDENIZADO"])||0;
+  // Currency detection from cell format (BRL default, USD if dollar format)
+  const moedaImpSeg = currencies['G'] || 'BRL';
+  const moedaApurado = currencies['R'] || 'BRL';
+  const moedaIndenizado = currencies['U'] || 'BRL';
+  // Use the most representative currency (indenizado > apurado > impSeg)
+  const moeda = (indenizado > 0 ? moedaIndenizado : (apurado > 0 ? moedaApurado : moedaImpSeg));
+  // Chassi/Identificação (col O) and Descrição da Ocorrência (col Q)
+  const chassi = String(raw["CHASSI/IDENTIFICAÇÃO"]||raw["CHASSI/IDENTIFICACAO"]||raw["CHASSI"]||""||raw["IDENTIFICAÇÃO"]||raw["IDENTIFICACAO"]||"").trim();
+  const descricaoOcorrencia = String(raw["DESCRIÇÃO DA OCORRÊNCIA"]||raw["DESCRICAO DA OCORRENCIA"]||raw["DESCRIÇÃO"]||raw["DESCRICAO"]||"").trim();
   const dataAbertura = formatDate(raw["DATA AVISO"]);
   const dataDocCompleta = formatDate(raw["DATA INCLUSÃO"]||raw["DATA INCLUSAO"]);
   const dataSinistro = formatDate(raw["DATA SINISTRO"]);
@@ -249,6 +258,7 @@ const enrichRelatorio = raw => {
     dataAbertura, dataSinistro, dataDocCompleta, inicioVig, terminoVig,
     importanciaSegurada, apurado, franquia, indenizado, valorEstimado,
     statusOriginal:statusRaw, status, statusDisplay:displayStatus(statusRaw), classificacao:isComplexo?"Complexo":"Simples",
+    chassi, descricaoOcorrencia, moeda, moedaImpSeg, moedaApurado, moedaIndenizado,
     prazoLegal, prazoRestante:prazoR!==null?Math.round(prazoR):null,
     prazoArt86: sobreLei15040&&temDoc ? 30-diasRef : null,
     risco, temDocCompleta:temDoc,
@@ -256,19 +266,63 @@ const enrichRelatorio = raw => {
     anteriorNorma, normaVigStr, sobreLei15040, sunsetAlert };
 };
 
+// ── Detect currency from XLSX cell format string ─────────────────────────
+const detectCurrency = (fmtStr) => {
+  if (!fmtStr) return 'BRL';
+  const f = fmtStr.toUpperCase();
+  // Dollar: [$$-409], [$USD], [$US], or plain $ without R$
+  if (f.includes('[$$') || f.includes('[$USD') || f.includes('[$US')) return 'USD';
+  if (f.includes('$') && !f.includes('R$') && !f.includes('"R$"')) return 'USD';
+  return 'BRL';
+};
+
 // ── Parse Excel/CSV ────────────────────────────────────────────────────────
 const parseFile = (file, onOk, onErr) => {
   const r = new FileReader();
   r.onload = e => {
     try {
-      const wb = XLSX.read(e.target.result, {type:"binary",cellDates:true});
+      const wb = XLSX.read(e.target.result, {type:"binary",cellDates:true,cellStyles:true});
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws, {defval:""});
       if (!rows.length) { onErr("Planilha sem dados."); return; }
       const keys = Object.keys(rows[0]);
       const isRelatorio = keys.some(k=>k.includes("SITUAÇÃO DO SINISTRO")||k.includes("SITUACAO DO SINISTRO")||k==="SEGURADO");
       if (!isRelatorio) { onErr("Formato não reconhecido. Use o RELATÓRIO_SINISTROS ou baixe o template."); return; }
-      const enriched = rows.filter(r=>r["SEGURADO"]||r["Nº SINISTRO"]).map(enrichRelatorio);
+      // Build per-row currency map from cell format strings (cols G=6, R=17, U=20)
+      // XLSX sheet_to_json uses row index starting at 1 (row 0 = headers)
+      const currencyMap = {};
+      const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+      const headerRow = range.s.r;
+      // Find column indices for IMP.SEG, APURADO, INDENIZADO by header name
+      const colIdxMap = {};
+      for (let c = range.s.c; c <= range.e.c; c++) {
+        const hCell = ws[XLSX.utils.encode_cell({r: headerRow, c})];
+        if (hCell) {
+          const hv = (hCell.v||'').toString().toUpperCase().trim();
+          if (hv.includes('IMP') && hv.includes('SEG')) colIdxMap['G'] = c;
+          else if (hv === 'APURADO') colIdxMap['R'] = c;
+          else if (hv === 'INDENIZADO') colIdxMap['U'] = c;
+        }
+      }
+      for (let rowIdx = headerRow + 1; rowIdx <= range.e.r; rowIdx++) {
+        const dataRowIdx = rowIdx - headerRow - 1; // 0-based data row
+        const currencies = {};
+        for (const [key, colIdx] of Object.entries(colIdxMap)) {
+          const cellAddr = XLSX.utils.encode_cell({r: rowIdx, c: colIdx});
+          const cell = ws[cellAddr];
+          if (cell && cell.z) {
+            currencies[key] = detectCurrency(cell.z);
+          } else if (cell && cell.s && cell.s.numFmtId) {
+            // fallback: check numFmtId (49=text, standard formats)
+            currencies[key] = 'BRL';
+          } else {
+            currencies[key] = 'BRL';
+          }
+        }
+        currencyMap[dataRowIdx] = currencies;
+      }
+      const filteredRows = rows.filter(r=>r["SEGURADO"]||r["Nº SINISTRO"]);
+      const enriched = filteredRows.map((row, idx) => enrichRelatorio(row, currencyMap[idx] || {}));
       onOk(enriched, rows.length);
     } catch(err) { onErr("Erro: "+err.message); }
   };
@@ -1280,12 +1334,13 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
         <div style={{...card,padding:0,overflow:"hidden"}}>
           <div style={{overflowX:"auto"}}>
             <table style={{width:"100%",borderCollapse:"collapse",minWidth:900}}>
-              <thead><tr style={{background:C.navy}}>{["Nº Sinistro","Segurado","Produto","Seguradora","Analista","Dt. Aviso","Dt. Inclusão","Status","Risco","Prazo","Apurado",""].map(h=><th key={h} style={{padding:"9px 8px",textAlign:"left",fontSize:10,fontWeight:600,color:"rgba(255,255,255,0.8)",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
+              <thead><tr style={{background:C.navy}}>{["Nº Sinistro","Segurado","Chassi","Produto","Seguradora","Analista","Dt. Aviso","Dt. Inclusão","Status","Risco","Prazo","Apurado","Descrição",""].map(h=><th key={h} style={{padding:"9px 8px",textAlign:"left",fontSize:10,fontWeight:600,color:"rgba(255,255,255,0.8)",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
               <tbody>
                 {filtrados.slice(0,200).map(c=>(
                   <tr key={c.id+c.nAviso} style={{borderBottom:`1px solid ${C.border}`}} onMouseEnter={e=>e.currentTarget.style.background=C.bg} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                     <td style={{padding:"8px 8px",fontSize:11.5,fontWeight:700,color:C.blue,whiteSpace:"nowrap"}}>{c.id||"—"}</td>
                     <td style={{padding:"8px 8px",fontSize:11.5,maxWidth:150,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.segurado}</td>
+                    <td style={{padding:"8px 8px",fontSize:11,color:C.grey,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.chassi||"—"}</td>
                     <td style={{padding:"8px 8px",fontSize:11,color:C.grey,maxWidth:110,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.tipo}</td>
                     <td style={{padding:"8px 8px",fontSize:11,color:C.grey,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.seguradora}</td>
                     <td style={{padding:"8px 8px",fontSize:11,color:C.grey,whiteSpace:"nowrap"}}>{c.regulador}</td>
@@ -1295,6 +1350,7 @@ Retorne SOMENTE JSON válido com esta estrutura exata:
                     <td style={{padding:"8px 8px"}}><span style={bdg(riskC(c.risco),riskBg(c.risco))}>{c.risco}</span></td>
                     <td style={{padding:"8px 8px",fontSize:11,fontWeight:700,color:riskC(c.risco),whiteSpace:"nowrap"}}>{c.prazoRestante!=null?(c.prazoRestante<0?`−${Math.abs(c.prazoRestante)}d`:c.prazoRestante+"d"):"—"}</td>
                     <td style={{padding:"8px 8px",fontSize:11,color:C.grey,whiteSpace:"nowrap"}}>{fCur(c.apurado)}</td>
+                    <td style={{padding:"8px 8px",fontSize:11,color:C.grey,maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={c.descricaoOcorrencia}>{c.descricaoOcorrencia||"—"}</td>
                     <td style={{padding:"8px 8px"}}><button onClick={()=>setSelC(c)} style={{background:"transparent",border:`1px solid ${C.blue}`,color:C.blue,borderRadius:6,padding:"3px 7px",fontSize:10.5,cursor:"pointer",fontFamily:font,fontWeight:600}}><Eye size={10} style={{verticalAlign:"middle"}}/></button></td>
                   </tr>
                 ))}
@@ -1569,14 +1625,14 @@ Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),
             width: { size: 100, type: WidthType.PERCENTAGE },
             rows: [
               new TableRow({
-                children: ["Nº Aviso", "Segurado", "Produto", "Seguradora", "Status", "Risco", "Dt. Aviso", "Apurado"].map(h =>
-                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: h, bold: true, size: 16, font: "Arial" })] })], width: { size: 12.5, type: WidthType.PERCENTAGE } })
+                children: ["Nº Aviso", "Segurado", "Chassi", "Produto", "Seguradora", "Status", "Risco", "Dt. Aviso", "Apurado", "Descrição da Ocorrência"].map((h, i) =>
+                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: h, bold: true, size: 16, font: "Arial" })] })], width: { size: i === 9 ? 20 : 8.9, type: WidthType.PERCENTAGE } })
                 )
               }),
               ...relCasos.slice(0, 500).map(c =>
                 new TableRow({
-                  children: [c.id || "—", c.segurado || "—", c.tipo || "—", c.seguradora || "—", c.statusDisplay || "—", c.risco || "—", c.dataAbertura || "—", fCur(c.apurado)].map(v =>
-                    new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: String(v), size: 16, font: "Arial" })] })], width: { size: 12.5, type: WidthType.PERCENTAGE } })
+                  children: [c.id || "—", c.segurado || "—", c.chassi || "—", c.tipo || "—", c.seguradora || "—", c.statusDisplay || "—", c.risco || "—", c.dataAbertura || "—", fCur(c.apurado), c.descricaoOcorrencia || "—"].map((v, i) =>
+                    new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: String(v), size: 16, font: "Arial" })] })], width: { size: i === 9 ? 20 : 8.9, type: WidthType.PERCENTAGE } })
                   )
                 })
               )
@@ -1650,17 +1706,28 @@ Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),
     relCasos.forEach(c => { resumoStatus[c.statusDisplay] = (resumoStatus[c.statusDisplay] || 0) + 1; });
     const statusEntries = Object.entries(resumoStatus).sort((a,b) => b[1] - a[1]);
     
-    // Cards de status (como no template)
-    let yPos = 1.2;
-    statusEntries.slice(0, 6).forEach(([st, qt], idx) => {
-      const col = idx < 3 ? 0.5 : 5.0;
-      const row = idx < 3 ? idx : idx - 3;
-      slide.addShape(pptx.ShapeType.roundRect, { x: col, y: yPos + row * 1.1, w: 4.3, h: 0.9, fill: { color: "F1F5F9" }, line: { color: "E2E8F0", pt: 1 }, rectRadius: 0.05 });
-      slide.addText(st, { x: col + 0.2, y: yPos + row * 1.1 + 0.1, w: 2.5, h: 0.35, fontSize: 10, fontFace: "Arial", color: GREY });
-      slide.addText(String(qt), { x: col + 0.2, y: yPos + row * 1.1 + 0.4, w: 2, h: 0.4, fontSize: 22, fontFace: "Arial", color: NAVY, bold: true });
+    // Cards de status — todos os status, sem corte
+    // Layout dinâmico: até 4 por linha, altura reduzida se muitos itens
+    const totalStatus = statusEntries.length;
+    const perRow = totalStatus <= 6 ? 2 : (totalStatus <= 9 ? 3 : 4);
+    const cardW = totalStatus <= 6 ? 4.3 : (totalStatus <= 9 ? 2.9 : 2.1);
+    const cardH = totalStatus <= 8 ? 0.9 : 0.75;
+    const cardGapX = totalStatus <= 6 ? 0.2 : 0.15;
+    const cardGapY = totalStatus <= 8 ? 0.15 : 0.1;
+    const startX = 0.3;
+    const startY = 1.1;
+    statusEntries.forEach(([st, qt], idx) => {
+      const col = idx % perRow;
+      const row = Math.floor(idx / perRow);
+      const x = startX + col * (cardW + cardGapX);
+      const y = startY + row * (cardH + cardGapY);
+      slide.addShape(pptx.ShapeType.roundRect, { x, y, w: cardW, h: cardH, fill: { color: "F1F5F9" }, line: { color: "E2E8F0", pt: 1 }, rectRadius: 0.05 });
+      slide.addText(st, { x: x + 0.15, y: y + 0.08, w: cardW - 0.2, h: 0.28, fontSize: totalStatus > 8 ? 8 : 9, fontFace: "Arial", color: GREY });
+      slide.addText(String(qt), { x: x + 0.15, y: y + 0.33, w: cardW - 0.2, h: 0.38, fontSize: totalStatus > 8 ? 18 : 20, fontFace: "Arial", color: NAVY, bold: true });
     });
-    
-    slide.addText(`Total: ${relCasos.length} sinistros`, { x: 0.5, y: 4.8, w: 4, h: 0.3, fontSize: 11, fontFace: "Arial", color: NAVY, bold: true });
+    const totalRows = Math.ceil(totalStatus / perRow);
+    const footerY = Math.min(4.8, startY + totalRows * (cardH + cardGapY) + 0.2);
+    slide.addText(`Total: ${relCasos.length} sinistros`, { x: 0.5, y: footerY, w: 4, h: 0.3, fontSize: 11, fontFace: "Arial", color: NAVY, bold: true });
 
     // ===== SLIDE 3: RESUMO FINANCEIRO =====
     slide = pptx.addSlide();
@@ -1902,18 +1969,20 @@ Seguradora: ${a.seguradora||""}`);setSec("aviso")}} style={{...btn(C.teal,true),
           <h4 style={{margin:"0 0 10px",fontSize:13,fontWeight:600,color:C.navy}}>Prévia — {relCliente === "Todos" ? "Todos os Clientes" : relCliente} ({relCasos.length} sinistros)</h4>
           <div style={{overflowX:"auto",maxHeight:350,overflowY:"auto"}}>
             <table style={{width:"100%",borderCollapse:"collapse",minWidth:700}}>
-              <thead><tr style={{background:C.navy}}>{["Nº Aviso","Segurado","Produto","Seguradora","Status","Risco","Dt. Aviso","Apurado"].map(h=><th key={h} style={{padding:"7px 6px",textAlign:"left",fontSize:10,fontWeight:600,color:"rgba(255,255,255,0.85)",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
+              <thead><tr style={{background:C.navy}}>{["Nº Aviso","Segurado","Chassi","Produto","Seguradora","Status","Risco","Dt. Aviso","Apurado","Descrição"].map(h=><th key={h} style={{padding:"7px 6px",textAlign:"left",fontSize:10,fontWeight:600,color:"rgba(255,255,255,0.85)",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
               <tbody>
                 {relCasos.slice(0,50).map((c,i)=>(
                   <tr key={i} style={{borderBottom:`1px solid ${C.border}`}}>
                     <td style={{padding:"6px",fontSize:11,fontWeight:600,color:C.blue}}>{c.id||"—"}</td>
                     <td style={{padding:"6px",fontSize:11,maxWidth:140,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.segurado}</td>
+                    <td style={{padding:"6px",fontSize:10.5,color:C.grey,maxWidth:100,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.chassi||"—"}</td>
                     <td style={{padding:"6px",fontSize:10.5,color:C.grey}}>{c.tipo}</td>
                     <td style={{padding:"6px",fontSize:10.5,color:C.grey}}>{c.seguradora}</td>
                     <td style={{padding:"6px"}}><span style={{...bdg(statDisplayC(c.statusDisplay)),fontSize:9.5}}>{c.statusDisplay}</span></td>
                     <td style={{padding:"6px"}}><span style={bdg(riskC(c.risco),riskBg(c.risco))}>{c.risco}</span></td>
                     <td style={{padding:"6px",fontSize:10.5,color:C.grey}}>{c.dataAbertura}</td>
                     <td style={{padding:"6px",fontSize:10.5,color:C.grey}}>{fCur(c.apurado)}</td>
+                    <td style={{padding:"6px",fontSize:10.5,color:C.grey,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={c.descricaoOcorrencia}>{c.descricaoOcorrencia||"—"}</td>
                   </tr>
                 ))}
               </tbody>
